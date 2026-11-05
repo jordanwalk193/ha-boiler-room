@@ -19,7 +19,10 @@ from custom_components.boiler_room.parsers import (
     is_rating_post,
     merge_elections,
     merge_headlines,
+    merge_politico_posts,
     newest_rolls,
+    parse_bluesky_posts,
+    parse_bluesky_ref,
     parse_civic_elections,
     parse_event,
     parse_fec_race,
@@ -579,3 +582,70 @@ def test_bot_challenge_detection():
 )
 def test_is_rating_post(title, expected):
     assert is_rating_post(title) is expected
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("kkondik.bsky.social", "kkondik.bsky.social"),
+        ("@KKondik.bsky.social", "kkondik.bsky.social"),
+        ("cookpolitical.com", "cookpolitical.com"),
+        ("https://bsky.app/profile/rubashkin.bsky.social", "rubashkin.bsky.social"),
+        ("https://bsky.app/profile/rubashkin.bsky.social/post/3abc", "rubashkin.bsky.social"),
+        ("did:plc:s7soaepovbjzupe4qxayfppj", "did:plc:s7soaepovbjzupe4qxayfppj"),
+        ("@Redistrict", None),  # an X handle, not a Bluesky one
+        ("not a handle", None),
+    ],
+)
+def test_parse_bluesky_ref(text, expected):
+    assert parse_bluesky_ref(text) == expected
+
+
+def _post(handle, rkey, when, **extra):
+    return {
+        "post": {
+            "uri": f"at://did:plc:x/app.bsky.feed.post/{rkey}",
+            "author": {"handle": handle},
+            "record": {"text": f"text {rkey}", "createdAt": when},
+            **extra,
+        }
+    }
+
+
+def test_parse_bluesky_posts_skips_reposts_and_reads_quote_media_links():
+    feed = [
+        _post("a.bsky.social", "1", "2026-11-01T00:00:00Z"),
+        {**_post("b.bsky.social", "2", "2026-11-02T00:00:00Z"), "reason": {"$type": "repost"}},
+        _post(
+            "a.bsky.social",
+            "3",
+            "2026-11-03T00:00:00Z",
+            embed={"media": {"external": {"uri": "https://x", "title": "<b>Title</b>"}}},
+        ),
+        {"post": {"uri": "broken"}},
+    ]
+    posts = parse_bluesky_posts(feed)
+    assert [p["url"].rsplit("/", 1)[-1] for p in posts] == ["3", "1"]
+    assert posts[0]["author"] == "a.bsky.social"  # no display name falls back to the handle
+    assert posts[0]["link_title"] == "Title"
+
+
+def test_merge_politico_posts_dedupes_and_limits():
+    a = parse_bluesky_posts([_post("a.x", "1", "2026-11-01T00:00:00Z")])
+    b = parse_bluesky_posts(
+        [_post("b.x", "2", "2026-11-02T00:00:00Z"), _post("a.x", "1", "2026-11-01T00:00:00Z")]
+    )
+    merged = merge_politico_posts([a, b], 5)
+    assert len(merged) == 2
+    assert merge_politico_posts([a, b], 1)[0]["handle"] == "b.x"
+
+
+def test_merge_politico_posts_caps_prolific_accounts():
+    loud = parse_bluesky_posts(
+        [_post("loud.x", f"l{i}", f"2026-11-0{i}T00:00:00Z") for i in range(1, 6)]
+    )
+    for i, p in enumerate(loud):
+        p["uri"] = f"at://loud/{i}"
+    quiet = parse_bluesky_posts([_post("quiet.x", "q1", "2026-10-01T00:00:00Z")])
+    merged = merge_politico_posts([loud, quiet], 10, per_author=2)
+    assert [p["handle"] for p in merged] == ["loud.x", "loud.x", "quiet.x"]

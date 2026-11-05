@@ -15,6 +15,7 @@ CIVIC_BASE = "https://www.googleapis.com/civicinfo/v2"
 FEC_BASE = "https://api.open.fec.gov/v1"
 FEDERAL_REGISTER_BASE = "https://www.federalregister.gov/api/v1"
 KALSHI_BASE = "https://api.elections.kalshi.com/trade-api/v2"
+BLUESKY_BASE = "https://public.api.bsky.app/xrpc"
 
 TIMEOUT = aiohttp.ClientTimeout(total=20)
 
@@ -244,6 +245,28 @@ class KalshiClient:
         except NotFoundError:
             return None
         return data.get("market") if isinstance(data, dict) else None
+
+
+class BlueskyClient:
+    """Bluesky's public AppView. Read-only, no account or key."""
+
+    def __init__(self, session: aiohttp.ClientSession) -> None:
+        self._session = session
+
+    async def author_feed(self, actor: str, limit: int = 10) -> list[dict[str, Any]]:
+        """An account's own recent posts, without its replies."""
+        try:
+            data = await _get_json(
+                self._session,
+                f"{BLUESKY_BASE}/app.bsky.feed.getAuthorFeed",
+                params={"actor": actor, "filter": "posts_no_replies", "limit": limit},
+            )
+        except BoilerRoomError as err:
+            # Bluesky answers an unknown handle with 400.
+            if "400" in str(err):
+                raise NotFoundError(actor) from err
+            raise
+        return data.get("feed") or [] if isinstance(data, dict) else []
 
 
 class FecClient:

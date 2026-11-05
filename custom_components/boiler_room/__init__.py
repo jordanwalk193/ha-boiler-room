@@ -18,6 +18,7 @@ from homeassistant.loader import async_get_integration
 from homeassistant.util import dt as dt_util
 
 from .api import (
+    BlueskyClient,
     CivicClient,
     CongressClient,
     CookClient,
@@ -47,11 +48,13 @@ from .const import (
     CONF_NEWS_SOURCES,
     CONF_ODDS_THRESHOLD,
     CONF_OPENSTATES_KEY,
+    CONF_POLITICOS,
     CONF_STATE,
     CONF_STATE_BILLS,
     DEFAULT_HEADLINE_COUNT,
     DEFAULT_NEWS_SOURCES,
     DEFAULT_ODDS_THRESHOLD,
+    DEFAULT_POLITICOS,
     DOMAIN,
     FEC_DEMO_KEY,
     FRONTEND_URL,
@@ -68,11 +71,13 @@ from .coordinator import (
     FloorVotesCoordinator,
     MarketsCoordinator,
     NewsCoordinator,
+    PoliticosCoordinator,
     RepsCoordinator,
     StateBillsCoordinator,
 )
 from .parsers import (
     current_congress,
+    parse_bluesky_ref,
     parse_federal_bill,
     parse_kalshi_ref,
     parse_market_ref,
@@ -110,6 +115,7 @@ class BoilerRoomData:
     finance: CampaignFinanceCoordinator | None = None
     executive: ExecutiveCoordinator | None = None
     crystal_ball: CrystalBallCoordinator | None = None
+    politicos: PoliticosCoordinator | None = None
     home_district: int | None = None
     home_state: str | None = None
 
@@ -129,6 +135,7 @@ class BoilerRoomData:
                 self.finance,
                 self.executive,
                 self.crystal_ball,
+                self.politicos,
             )
             if c is not None
         ]
@@ -196,6 +203,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: BoilerRoomConfigEntry) -
             k for k in (parse_kalshi_ref(t) for t in split_list(opts.get(CONF_KALSHI))) if k
         )
     )
+
+    politicos = politico_handles(opts.get(CONF_POLITICOS))
 
     def home_district() -> int | None:
         if district is not None:
@@ -276,6 +285,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: BoilerRoomConfigEntry) -
             if opts.get(CONF_CRYSTAL_BALL, False)
             else None
         ),
+        politicos=(
+            PoliticosCoordinator(hass, entry, BlueskyClient(session), politicos)
+            if politicos
+            else None
+        ),
     )
 
     # Reps first: state bills, elections, votes and money use what it discovers.
@@ -295,7 +309,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: BoilerRoomConfigEntry) -
         data.finance = finance if finance.races() else None
     # The extras added in 0.3 start soft: if one of them is down, its entities show
     # unavailable and retry on schedule instead of holding up the whole integration.
-    soft = {id(c) for c in (data.floor_votes, data.finance, data.executive, data.crystal_ball) if c}
+    soft = {
+        id(c)
+        for c in (data.floor_votes, data.finance, data.executive, data.crystal_ball, data.politicos)
+        if c
+    }
     for coordinator in data.coordinators:
         if coordinator is data.reps:
             continue
@@ -331,3 +349,14 @@ def _feed_name(url: str) -> str:
     if host.endswith("reddit.com") and "/r/" in path:
         return f"reddit {path[path.index('/r/') + 1 :]}"
     return host or url
+
+
+def politico_handles(text: str | None) -> list[str]:
+    """Bluesky handles to follow. Unset means the curated defaults; "none" turns it off."""
+    if text is None:
+        items = list(DEFAULT_POLITICOS)
+    elif text.strip().lower() == "none":
+        items = []
+    else:
+        items = split_list(text)
+    return list(dict.fromkeys(h for h in (parse_bluesky_ref(i) for i in items) if h))

@@ -9,7 +9,7 @@
  * translation key rather than entity id, so renamed entities keep working.
  */
 const DOMAIN = 'boiler_room';
-const VERSION = '0.3.0';
+const VERSION = '0.4.0';
 
 // Cook's seven-step scale, Solid D to Solid R. Toss Up sits in brass.
 const SCALE = ['Solid D', 'Likely D', 'Lean D', 'Toss Up', 'Lean R', 'Likely R', 'Solid R'];
@@ -163,6 +163,14 @@ const STYLE = `
   .cand .raised { height: 100%; border-radius: 5px; opacity: .85; }
   .cand .cash { position: absolute; top: 3px; left: 0; height: 4px; border-radius: 2px; background: rgba(255,255,255,.75); }
   .cand .num { text-align: right; font-variant-numeric: tabular-nums; color: var(--primary-text-color); }
+
+  /* politicos */
+  .skeet { display: flex; gap: 10px; padding: 10px 0; border-top: 1px solid var(--divider-color); }
+  .skeet:first-of-type { border-top: 0; padding-top: 0; }
+  .skeet .face { width: 36px; height: 36px; font-size: 12px; }
+  .skeet .body { font-size: 14px; line-height: 1.4; color: var(--primary-text-color); white-space: pre-line; overflow-wrap: anywhere; margin-top: 2px; }
+  .skeet .body.clip3 { display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }
+  .linkcard { display: block; margin-top: 6px; padding: 6px 10px; border: 1px solid var(--divider-color); border-radius: 8px; font-size: 13px; color: var(--primary-text-color); }
 
   /* headlines */
   .news { padding: 9px 0; border-top: 1px solid var(--divider-color); }
@@ -358,6 +366,24 @@ const PANELS = {
       + `<div class="note">From the Federal Register.</div>`;
   },
 
+  politicos(hass, idx, config) {
+    const st = hass.states[idx.byKey.latest_politico_post];
+    if (!st) return `<div class="empty">Add Bluesky handles under Politicos in the integration's Configure screen.</div>`;
+    const a = st.attributes;
+    const posts = (a.posts || []).slice(0, config.limit || 8);
+    const failed = a.failed_accounts || [];
+    if (!posts.length) return `<div class="empty">No posts yet${failed.length ? '. Couldn\'t read: ' + esc(failed.join(', ')) : ''}.</div>`;
+    return posts.map(p => {
+      const pic = safeUrl(p.avatar) ? `<img class="face" src="${safeUrl(p.avatar)}" alt="" loading="lazy">`
+        : `<div class="face">${esc(String(p.author || '?').split(' ').map(w => w[0]).slice(0, 2).join(''))}</div>`;
+      const card = p.link_title && safeUrl(p.link_url)
+        ? `<a class="linkcard" href="${safeUrl(p.link_url)}" target="_blank" rel="noopener">${esc(p.link_title)}</a>` : '';
+      return `<div class="skeet">${pic}<div class="grow">
+        <div class="sub"><b style="color:var(--primary-text-color);font-weight:500">${esc(p.author)}</b> · ${safeUrl(p.url) ? `<a href="${safeUrl(p.url)}" target="_blank" rel="noopener">${esc(ago(p.created))}</a>` : esc(ago(p.created))}${p.likes ? ` · ♥ ${esc(p.likes)}` : ''}</div>
+        ${p.text ? `<div class="body clip3">${esc(p.text)}</div>` : ''}${card}</div></div>`;
+    }).join('') + `<div class="note">From Bluesky${failed.length ? '. Couldn\'t read: ' + esc(failed.join(', ')) : ''}.</div>`;
+  },
+
   crystal_ball(hass, idx, config) {
     const st = hass.states[idx.byKey.crystal_ball_latest];
     if (!st) return `<div class="empty">Turn on Sabato's Crystal Ball in the integration's Configure screen.</div>`;
@@ -422,7 +448,7 @@ class BoilerRoomCard extends HTMLElement {
     this.dispatchEvent(new CustomEvent('hass-more-info', {detail: {entityId: el.dataset.entity}, bubbles: true, composed: true}));
   }
 
-  getCardSize() { return {election: 3, reps: 5, ratings: 4, home_races: 3, bills: 6, odds: 6, headlines: 8, votes: 8, money: 6, executive: 6, crystal_ball: 5}[this._config?.panel] || 4; }
+  getCardSize() { return {election: 3, reps: 5, ratings: 4, home_races: 3, bills: 6, odds: 6, headlines: 8, votes: 8, money: 6, executive: 6, crystal_ball: 5, politicos: 8}[this._config?.panel] || 4; }
   getGridOptions() { return {columns: 'full', min_columns: 6}; }
   static getStubConfig() { return {panel: 'election'}; }
 }
@@ -451,7 +477,8 @@ class BoilerRoomStrategy {
         section(heading('Next election', 'mdi:ballot-outline'), card('election'),
           cook ? heading('Your races', 'mdi:flag-checkered') : null, cook ? card('home_races') : null),
         section(heading('Who represents you', 'mdi:account-tie'), card('reps')),
-        group('News') ? section(heading('Headlines', 'mdi:newspaper-variant-outline'), card('headlines', {limit: 6})) : null,
+        group('News') && has('latest_headline') ? section(heading('Headlines', 'mdi:newspaper-variant-outline'), card('headlines', {limit: 6})) : null,
+        has('latest_politico_post') ? section(heading('Politicos', 'mdi:butterfly-outline'), card('politicos', {limit: 4})) : null,
         cook ? {...section(heading('House ratings', 'mdi:scale-balance'), card('ratings', {chamber: 'house', limit: 0})), column_span: 2} : null,
         group('Prediction Markets') ? section(heading('Odds', 'mdi:chart-line-variant'), card('odds', {outcomes: 3})) : null,
         votes ? section(heading('On the House floor', 'mdi:gavel'), card('votes', {limit: 3})) : null,
@@ -510,8 +537,9 @@ class BoilerRoomStrategy {
     if (group('News')) {
       views.push({
         title: 'News', path: 'news', icon: 'mdi:newspaper-variant-outline', max_columns: 2, sections: [
-          {...section(heading('Headlines', 'mdi:newspaper-variant-outline'), card('headlines', {limit: 25})), column_span: 2},
-        ],
+          has('latest_headline') ? section(heading('Headlines', 'mdi:newspaper-variant-outline'), card('headlines', {limit: 25})) : null,
+          has('latest_politico_post') ? section(heading('Politicos', 'mdi:butterfly-outline'), card('politicos', {limit: 25})) : null,
+        ].filter(Boolean),
       });
     }
     views.push({
@@ -544,7 +572,7 @@ if (!window.customCards.some(c => c.type === 'boiler-room-card')) {
   window.customCards.push({
     type: 'boiler-room-card',
     name: 'Boiler Room',
-    description: 'Elections, representatives, race ratings, floor votes, campaign money, executive actions, bills, odds and headlines from Boiler Room.',
+    description: 'Elections, representatives, race ratings, floor votes, campaign money, executive actions, bills, odds, headlines and politicos from Boiler Room.',
     preview: false,
     documentationURL: 'https://github.com/jordanwalk193/ha-boiler-room',
   });

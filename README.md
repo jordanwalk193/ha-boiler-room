@@ -16,7 +16,7 @@ Boiler Room doesn't editorialize. It reads public data sources and shows you wha
 | **Campaign Finance** | `Top fundraiser` for your House race, your Senate race, and the presidential race in presidential cycles. Every candidate's money raised, spent and cash on hand is in attributes, from FEC filings. | Nothing (a free api.data.gov key lifts the shared demo key's limits). Needs your home state, and your district for the House race. |
 | **Executive Actions** | `Latest executive action` (executive orders, proclamations, memoranda, with number, signing date and link) and `Executive orders this year`. | Nothing |
 | **Prediction Markets** | One sensor per Polymarket or Kalshi market or event. Yes/No markets report the implied probability in %; multi-candidate events report the leader with every outcome's odds in attributes. | Nothing |
-| **News** | `Latest headline`, with the most recent headlines across your chosen outlets in attributes. | Nothing |
+| **News** | `Latest headline`, with the most recent headlines across your chosen outlets in attributes. `Latest politico post`, the newest posts from the analysts you follow on Bluesky (text, link preview, likes, link to the post). | Nothing |
 | **Elections** | `Election day` (on today if there's an election), `Next election` (date + days until), and an `Elections` calendar. Federal general elections are always included; a Google Civic key adds official listings for your state. | Nothing (Google Civic key optional) |
 
 ### Automation events
@@ -30,6 +30,7 @@ Boiler Room doesn't editorialize. It reads public data sources and shows you wha
 | `boiler_room_rep_vote` | Your U.S. representative votes on a new House roll call | `representative`, `vote`, `with_party`, `roll`, `question`, `bill`, `result`, `date`, `url` |
 | `boiler_room_fundraising_report` | A candidate in one of your races files a new FEC report | `office`, `candidate`, `party`, `raised`, `raised_since_last`, `cash_on_hand`, `through`, `url` |
 | `boiler_room_executive_action` | A new presidential document is published | `title`, `kind`, `number`, `signed`, `published`, `president`, `url`, `pdf_url` |
+| `boiler_room_politico_post` | Someone you follow on Bluesky posts | `author`, `handle`, `text`, `created`, `url`, `link_title`, `link_url` |
 | `boiler_room_crystal_ball_post` | A new Crystal Ball article appears (only when the feed is readable) | `title`, `link`, `published`, `rating_change` |
 
 ## Install
@@ -69,6 +70,7 @@ Keys can be changed later from the integration's **Reconfigure** menu.
 | Executive actions | On by default |
 | Sabato's Crystal Ball articles | Off by default; experimental, see below |
 | News outlets | NPR, PBS News Hour, The Hill, Fox News (on by default), plus BBC US and Politico |
+| Politicos | Bluesky handles or bsky.app profile links. Starts with the nonpartisan handicappers: the Cook Political Report, Erin Covey (Cook), Jacob Rubashkin (Inside Elections), Kyle Kondik and Larry Sabato (Crystal Ball) and the UVA Center for Politics. `none` turns it off. |
 | Extra feeds | Any RSS/Atom URL — a local paper, a Substack, or a subreddit like `https://www.reddit.com/r/NeutralPolitics/.rss` |
 | Headline keywords | `Syracuse, Hochul, budget` — keep only headlines that mention one of these |
 
@@ -89,9 +91,9 @@ Each panel is also a card you can drop on any dashboard:
 
 ```yaml
 type: custom:boiler-room-card
-panel: ratings      # election, reps, home_races, ratings, votes, money, executive, crystal_ball, bills, odds, headlines
+panel: ratings      # election, reps, home_races, ratings, votes, money, executive, crystal_ball, politicos, bills, odds, headlines
 chamber: house      # ratings only: house, senate or governor
-limit: 10           # ratings: toss-up races listed (0 hides the list); headlines/votes/executive/crystal_ball: how many
+limit: 10           # ratings: toss-up races listed (0 hides the list); headlines/votes/executive/crystal_ball/politicos: how many
 outcomes: 4         # odds: outcomes shown per multi-candidate market
 title: Optional heading
 ```
@@ -200,7 +202,7 @@ content: >
 | Source | Interval |
 |---|---|
 | Polymarket, Kalshi | 5 minutes |
-| News | 10 minutes |
+| News, Bluesky politicos | 10 minutes |
 | Federal bills | 30 minutes |
 | State bills | 1 hour (Open States' free tier is small; requests are spaced 1 s apart) |
 | Representatives | Daily |
@@ -218,6 +220,9 @@ No. Real-time results come from paid feeds such as the AP's, and there isn't a f
 
 **Can it read other forecasters (Crystal Ball, Inside Elections, Split Ticket)?**
 Only partly. None of them publish a ratings feed or API to build on, and Boiler Room doesn't scrape. Sabato's Crystal Ball has an official article feed, so it's offered as an experiment (below). If a forecaster publishes ratings data, it'll go in.
+
+**Can it follow politicos on X/Twitter?**
+No. Reading other people's posts on X needs its paid API, and Boiler Room doesn't scrape. Many analysts now post on Bluesky, which has a free public API, so the Politicos feed uses that. Some are quiet there (Larry Sabato posts mostly on X), and Charlie Cook has no verified Bluesky account, but his newsroom's is in the defaults. Analysts' newsletters work as extra feeds too: Silver Bulletin `https://www.natesilver.net/feed`, Split Ticket `https://split-ticket.org/feed/`, Strength In Numbers `https://www.gelliottmorris.com/feed`, The Downballot `https://www.the-downballot.com/feed`, Cook `https://www.cookpolitical.com/rss.xml`.
 
 **Why no Senate votes?**
 Congress.gov's vote API covers the House. The Senate publishes its roll calls on senate.gov, which blocks automated readers.
@@ -244,6 +249,6 @@ pip install pytest-homeassistant-custom-component
 pytest -q
 ```
 
-Data: [Congress.gov API](https://api.congress.gov/) (Library of Congress), [Open States](https://open.pluralpolicy.com/) (Plural), [OpenFEC](https://api.open.fec.gov/developers/) (Federal Election Commission), [Federal Register API](https://www.federalregister.gov/developers/documentation/api/v1), [Polymarket Gamma API](https://docs.polymarket.com/), [Kalshi public market data](https://docs.kalshi.com/), [Google Civic Information API](https://developers.google.com/civic-information), [Cook Political Report API](https://www.cookpolitical.com/api), [Sabato's Crystal Ball](https://centerforpolitics.org/crystalball/) feed, and each outlet's public feed. Not affiliated with any of them.
+Data: [Congress.gov API](https://api.congress.gov/) (Library of Congress), [Open States](https://open.pluralpolicy.com/) (Plural), [OpenFEC](https://api.open.fec.gov/developers/) (Federal Election Commission), [Federal Register API](https://www.federalregister.gov/developers/documentation/api/v1), [Polymarket Gamma API](https://docs.polymarket.com/), [Kalshi public market data](https://docs.kalshi.com/), [Google Civic Information API](https://developers.google.com/civic-information), [Cook Political Report API](https://www.cookpolitical.com/api), [Sabato's Crystal Ball](https://centerforpolitics.org/crystalball/) feed, [Bluesky public API](https://docs.bsky.app/), and each outlet's public feed. Not affiliated with any of them.
 
 MIT licensed.

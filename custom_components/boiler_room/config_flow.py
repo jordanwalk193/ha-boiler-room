@@ -53,11 +53,13 @@ from .const import (
     CONF_NEWS_SOURCES,
     CONF_ODDS_THRESHOLD,
     CONF_OPENSTATES_KEY,
+    CONF_POLITICOS,
     CONF_STATE,
     CONF_STATE_BILLS,
     DEFAULT_HEADLINE_COUNT,
     DEFAULT_NEWS_SOURCES,
     DEFAULT_ODDS_THRESHOLD,
+    DEFAULT_POLITICOS,
     DOMAIN,
     NEWS_SOURCES,
     STATE_AUTO,
@@ -65,6 +67,7 @@ from .const import (
 )
 from .parsers import (
     current_congress,
+    parse_bluesky_ref,
     parse_federal_bill,
     parse_kalshi_ref,
     parse_market_ref,
@@ -97,6 +100,7 @@ DEFAULT_OPTIONS: dict[str, Any] = {
     CONF_CAMPAIGN_FINANCE: True,
     CONF_EXECUTIVE: True,
     CONF_CRYSTAL_BALL: False,
+    CONF_POLITICOS: "\n".join(DEFAULT_POLITICOS),
 }
 
 LINKS = {
@@ -243,6 +247,7 @@ def _options_schema() -> vol.Schema:
             vol.Optional(CONF_NEWS_SOURCES, default=DEFAULT_NEWS_SOURCES): SelectSelector(
                 SelectSelectorConfig(options=sources, multiple=True, mode=SelectSelectorMode.LIST)
             ),
+            vol.Optional(CONF_POLITICOS, default="\n".join(DEFAULT_POLITICOS)): _MULTILINE,
             vol.Optional(CONF_CUSTOM_FEEDS): _MULTILINE,
             vol.Optional(CONF_NEWS_KEYWORDS): TextSelector(),
             vol.Optional(CONF_HEADLINE_COUNT, default=DEFAULT_HEADLINE_COUNT): NumberSelector(
@@ -266,8 +271,13 @@ def validate_options(options: Mapping[str, Any]) -> tuple[dict[str, str], list[s
         (CONF_STATE_BILLS, parse_state_bill),
         (CONF_MARKETS, parse_market_ref),
         (CONF_KALSHI, parse_kalshi_ref),
+        (CONF_POLITICOS, parse_bluesky_ref),
     ):
-        wrong = [t for t in split_list(options.get(field)) if parser(t) is None]
+        wrong = [
+            t
+            for t in split_list(options.get(field))
+            if parser(t) is None and not (field == CONF_POLITICOS and t.lower() == "none")
+        ]
         if wrong:
             errors[field] = "invalid_entries"
             bad += wrong

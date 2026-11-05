@@ -578,6 +578,87 @@ def parse_presidential_documents(payload: Any) -> list[dict[str, Any]]:
     return docs
 
 
+# --------------------------------------------------------------------------
+# Bluesky (politicos)
+# --------------------------------------------------------------------------
+
+_BSKY_HANDLE_RE = re.compile(
+    r"^@?([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+)$", re.I
+)
+_BSKY_URL_RE = re.compile(r"bsky\.app/profile/([^/?#\s]+)", re.I)
+
+
+def parse_bluesky_ref(text: str) -> str | None:
+    """A Bluesky handle from '@name.bsky.social', 'name.bsky.social', a custom-domain
+    handle like 'cookpolitical.com', or a bsky.app profile link."""
+    raw = text.strip()
+    if match := _BSKY_URL_RE.search(raw):
+        raw = match.group(1)
+    if raw.lower().startswith("did:plc:") and re.fullmatch(r"did:plc:[a-z0-9]{24}", raw, re.I):
+        return raw.lower()
+    match = _BSKY_HANDLE_RE.match(raw)
+    return match.group(1).lower() if match else None
+
+
+def parse_bluesky_posts(feed: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """An author feed's own posts (reposts dropped), newest first."""
+    posts = []
+    for item in feed:
+        if not isinstance(item, dict) or item.get("reason"):
+            continue  # a repost of someone else
+        post = item.get("post") or {}
+        record = post.get("record") or {}
+        author = post.get("author") or {}
+        handle = author.get("handle")
+        uri = str(post.get("uri") or "")
+        rkey = uri.rsplit("/", 1)[-1] if "/app.bsky.feed.post/" in uri else None
+        if not handle or not rkey:
+            continue
+        embed = post.get("embed") or {}
+        external = embed.get("external") or (embed.get("media") or {}).get("external") or {}
+        posts.append(
+            {
+                "author": author.get("displayName") or handle,
+                "handle": handle,
+                "avatar": author.get("avatar"),
+                "text": (record.get("text") or "").strip(),
+                "created": record.get("createdAt") or post.get("indexedAt"),
+                "url": f"https://bsky.app/profile/{handle}/post/{rkey}",
+                "uri": uri,
+                "likes": int(post.get("likeCount") or 0),
+                "reposts": int(post.get("repostCount") or 0),
+                "replies": int(post.get("replyCount") or 0),
+                "link_title": _clean(external.get("title")) or None,
+                "link_url": external.get("uri"),
+            }
+        )
+    posts.sort(key=lambda p: str(p["created"] or ""), reverse=True)
+    return posts
+
+
+def merge_politico_posts(
+    groups: list[list[dict[str, Any]]], limit: int, per_author: int | None = None
+) -> list[dict[str, Any]]:
+    """Newest first across accounts. `per_author` keeps one prolific account from
+    crowding everyone else out of the list."""
+    seen: set[str] = set()
+    counts: dict[str, int] = {}
+    out = []
+    for post in sorted(
+        (p for g in groups for p in g), key=lambda p: str(p["created"] or ""), reverse=True
+    ):
+        if post["uri"] in seen:
+            continue
+        if per_author and counts.get(post["handle"], 0) >= per_author:
+            continue
+        seen.add(post["uri"])
+        counts[post["handle"]] = counts.get(post["handle"], 0) + 1
+        out.append(post)
+        if len(out) >= limit:
+            break
+    return out
+
+
 _RATING_POST_RE = re.compile(r"rating change|ratings change|race ratings|final ratings", re.I)
 
 

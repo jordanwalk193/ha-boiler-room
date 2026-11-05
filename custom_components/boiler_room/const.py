@@ -32,6 +32,7 @@ CONF_FLOOR_VOTES: Final = "floor_votes"
 CONF_CAMPAIGN_FINANCE: Final = "campaign_finance"
 CONF_EXECUTIVE: Final = "executive_actions"
 CONF_CRYSTAL_BALL: Final = "crystal_ball"
+CONF_POLITICOS: Final = "politicos"
 
 STATE_AUTO: Final = "auto"
 
@@ -58,6 +59,8 @@ INTERVAL_FEC: Final = timedelta(hours=12)
 INTERVAL_EXECUTIVE: Final = timedelta(hours=1)
 INTERVAL_CRYSTAL_BALL: Final = timedelta(hours=1)
 FEC_OFFICES: Final = ("house", "senate", "president")
+INTERVAL_POLITICOS: Final = timedelta(minutes=10)
+POLITICO_POSTS_KEPT: Final = 25
 
 # Bus events for automations
 EVENT_BILL_ACTION: Final = "boiler_room_bill_action"
@@ -68,6 +71,20 @@ EVENT_REP_VOTE: Final = "boiler_room_rep_vote"
 EVENT_EXECUTIVE_ACTION: Final = "boiler_room_executive_action"
 EVENT_FEC_REPORT: Final = "boiler_room_fundraising_report"
 EVENT_CRYSTAL_BALL_POST: Final = "boiler_room_crystal_ball_post"
+EVENT_POLITICO_POST: Final = "boiler_room_politico_post"
+
+# Bluesky accounts of the nonpartisan race handicappers, checked by hand in
+# Nov 2026: each is either verified by Bluesky or identified in its own bio, and
+# none of them are partisan outlets. X/Twitter isn't offered: reading it needs a
+# paid API, and Boiler Room doesn't scrape.
+DEFAULT_POLITICOS: Final = (
+    "cookpolitical.com",  # The Cook Political Report (verified)
+    "erincovey.bsky.social",  # Erin Covey, Cook House editor
+    "rubashkin.bsky.social",  # Jacob Rubashkin, Inside Elections (verified)
+    "kkondik.bsky.social",  # Kyle Kondik, Sabato's Crystal Ball
+    "larrysabato.bsky.social",  # Larry Sabato, UVA Center for Politics
+    "center4politics.bsky.social",  # UVA Center for Politics
+)
 
 # Sabato's Crystal Ball (UVA Center for Politics) publishes ratings as map images,
 # with no data feed. Its article RSS is official, but the site sits behind a
@@ -77,7 +94,7 @@ CRYSTAL_BALL_FEED: Final = "https://centerforpolitics.org/crystalball/feed/"
 CRYSTAL_BALL_URL: Final = "https://centerforpolitics.org/crystalball/"
 
 USER_AGENT: Final = (
-    "HomeAssistant-BoilerRoom/0.3 (+https://github.com/jordanwalk193/ha-boiler-room)"
+    "HomeAssistant-BoilerRoom/0.4 (+https://github.com/jordanwalk193/ha-boiler-room)"
 )
 
 # Established outlets with working RSS feeds, chosen to span the spectrum.

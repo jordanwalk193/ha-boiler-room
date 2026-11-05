@@ -71,7 +71,8 @@
           "floor_votes": "House floor votes",
           "campaign_finance": "Campaign finance",
           "executive_actions": "Executive actions",
-          "crystal_ball": "Sabato's Crystal Ball articles (experimental)"
+          "crystal_ball": "Sabato's Crystal Ball articles (experimental)",
+          "politicos": "Politicos on Bluesky"
         },
         "data_description": {
           "state": "Auto works when an Open States key is set. Without it, pick your state for senators from Congress.gov.",
@@ -88,7 +89,8 @@
           "floor_votes": "Recent House roll calls and how your representative voted. Needs a Congress.gov key. (The Senate's vote site blocks automated readers, so Senate votes aren't included.)",
           "campaign_finance": "Money raised, spent and on hand for every candidate in your House and Senate races (and the presidential race in presidential cycles), from the FEC.",
           "executive_actions": "Executive orders, proclamations and memoranda as published in the Federal Register.",
-          "crystal_ball": "Reads the UVA Center for Politics' official Crystal Ball article feed. The site often blocks automated readers; if it blocks yours, Home Assistant shows a repair notice and this stays empty. Crystal Ball's ratings themselves are only published as maps, so they can't be read as data."
+          "crystal_ball": "Reads the UVA Center for Politics' official Crystal Ball article feed. The site often blocks automated readers; if it blocks yours, Home Assistant shows a repair notice and this stays empty. Crystal Ball's ratings themselves are only published as maps, so they can't be read as data.",
+          "politicos": "Bluesky handles or bsky.app profile links, one per line. Starts with the nonpartisan race handicappers (Cook, Inside Elections, the Crystal Ball). Type none to turn the feed off. X/Twitter isn't supported: reading it needs a paid API."
         }
       }
     },
@@ -163,6 +165,9 @@
       },
       "executive_orders_this_year": {
         "name": "Executive orders this year"
+      },
+      "latest_politico_post": {
+        "name": "Latest politico post"
       }
     },
     "binary_sensor": {

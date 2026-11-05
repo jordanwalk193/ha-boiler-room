@@ -19,6 +19,7 @@ from homeassistant.util import dt as dt_util
 from .api import (
     AuthError,
     BlockedError,
+    BlueskyClient,
     BoilerRoomError,
     CivicClient,
     CongressClient,
@@ -42,6 +43,7 @@ from .const import (
     EVENT_FEC_REPORT,
     EVENT_NEW_HEADLINE,
     EVENT_ODDS_MOVED,
+    EVENT_POLITICO_POST,
     EVENT_RATING_CHANGED,
     EVENT_REP_VOTE,
     FLOOR_VOTES_KEPT,
@@ -54,8 +56,10 @@ from .const import (
     INTERVAL_FLOOR_VOTES,
     INTERVAL_MARKETS,
     INTERVAL_NEWS,
+    INTERVAL_POLITICOS,
     INTERVAL_REPS,
     INTERVAL_STATE_BILLS,
+    POLITICO_POSTS_KEPT,
 )
 from .parsers import (
     FederalBillRef,
@@ -70,7 +74,9 @@ from .parsers import (
     is_rating_post,
     merge_elections,
     merge_headlines,
+    merge_politico_posts,
     newest_rolls,
+    parse_bluesky_posts,
     parse_civic_elections,
     parse_cook_race,
     parse_event,
@@ -935,3 +941,87 @@ class CrystalBallCoordinator(_Base):
                         {**post.as_dict(), "rating_change": is_rating_post(post.title)},
                     )
         return CrystalBallData(posts[:15], False, dt_util.utcnow().isoformat())
+
+
+# --------------------------------------------------------------------------
+# Politicos on Bluesky
+# --------------------------------------------------------------------------
+
+
+@dataclass
+class PoliticosData:
+    posts: list[dict[str, Any]] = field(default_factory=list)
+    accounts: dict[str, dict[str, Any]] = field(default_factory=dict)
+    failed: list[str] = field(default_factory=list)
+
+
+class PoliticosCoordinator(_Base):
+    """Recent posts from the analysts you follow on Bluesky."""
+
+    def __init__(
+        self,
+        hass: HomeAssistant,
+        entry: ConfigEntry,
+        client: BlueskyClient,
+        handles: list[str],
+        limit: int = POLITICO_POSTS_KEPT,
+    ) -> None:
+        super().__init__(hass, entry, "politicos", INTERVAL_POLITICOS)
+        self._client = client
+        self.handles = handles
+        self._limit = limit
+
+    async def _async_update_data(self) -> PoliticosData:
+        results = await asyncio.gather(
+            *(self._client.author_feed(h) for h in self.handles), return_exceptions=True
+        )
+        groups: list[list[dict[str, Any]]] = []
+        failed: list[str] = []
+        accounts: dict[str, dict[str, Any]] = {}
+        for handle, result in zip(self.handles, results, strict=True):
+            if isinstance(result, BaseException):
+                _LOGGER.debug("Bluesky %s: %s", handle, result)
+                failed.append(handle)
+                continue
+            posts = parse_bluesky_posts(result)
+            groups.append(posts)
+            if posts:
+                accounts[handle] = {
+                    "name": posts[0]["author"],
+                    "last_post": posts[0]["created"],
+                    "url": f"https://bsky.app/profile/{posts[0]['handle']}",
+                }
+            else:
+                accounts[handle] = {
+                    "name": handle,
+                    "last_post": None,
+                    "url": f"https://bsky.app/profile/{handle}",
+                }
+        if self.handles and not groups:
+            raise UpdateFailed("None of the Bluesky accounts could be read")
+        # Share the list out: no account gets more than its fair slice (min 3).
+        per_author = max(3, self._limit // max(1, len(self.handles)))
+        posts = merge_politico_posts(groups, self._limit, per_author)
+        if self.data is not None:
+            seen = {p["uri"] for p in self.data.posts}
+            newest_before = max((p["created"] or "" for p in self.data.posts), default="")
+            for post in reversed(posts):
+                # Only genuinely new posts, not old ones that rose into view
+                # because another account went quiet.
+                if post["uri"] not in seen and (post["created"] or "") > newest_before:
+                    self.hass.bus.async_fire(
+                        EVENT_POLITICO_POST,
+                        {
+                            k: post[k]
+                            for k in (
+                                "author",
+                                "handle",
+                                "text",
+                                "created",
+                                "url",
+                                "link_title",
+                                "link_url",
+                            )
+                        },
+                    )
+        return PoliticosData(posts, accounts, failed)

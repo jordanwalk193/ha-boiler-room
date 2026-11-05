@@ -27,6 +27,7 @@ from .coordinator import (
     FloorVotesCoordinator,
     MarketsCoordinator,
     NewsCoordinator,
+    PoliticosCoordinator,
     RepsCoordinator,
     StateBillsCoordinator,
 )
@@ -74,6 +75,8 @@ async def async_setup_entry(
 
     if data.news:
         entities.append(HeadlineSensor(data.news, entry))
+    if data.politicos:
+        entities.append(PoliticoPostSensor(data.politicos, entry))
 
     entities.append(NextElectionSensor(data.elections, entry))
 
@@ -727,3 +730,40 @@ class ExecutiveOrderCountSensor(BoilerRoomEntity, SensorEntity):
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         return {"year": dt_util.now().year, "source": "Federal Register"}
+
+
+class PoliticoPostSensor(BoilerRoomEntity, SensorEntity):
+    """Newest post from the analysts you follow on Bluesky; the feed in attributes."""
+
+    coordinator: PoliticosCoordinator
+    _attr_translation_key = "latest_politico_post"
+    _attr_icon = "mdi:butterfly-outline"
+
+    def __init__(self, coordinator: PoliticosCoordinator, entry) -> None:
+        super().__init__(coordinator, entry, "news", "latest_politico_post")
+
+    @property
+    def _posts(self) -> list[dict[str, Any]]:
+        return self.coordinator.data.posts if self.coordinator.data else []
+
+    @property
+    def native_value(self) -> str | None:
+        if not self._posts:
+            return None
+        post = self._posts[0]
+        return truncate(f"{post['author']}: {post['text'] or post['link_title'] or ''}".strip())
+
+    @property
+    def entity_picture(self) -> str | None:
+        return self._posts[0].get("avatar") if self._posts else None
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        data = self.coordinator.data
+        return {
+            "posts": [{k: v for k, v in p.items() if k != "uri"} for p in self._posts],
+            "accounts": data.accounts if data else {},
+            "following": self.coordinator.handles,
+            "failed_accounts": data.failed if data else [],
+            "source": "Bluesky",
+        }

@@ -30,6 +30,7 @@ from custom_components.boiler_room.const import (
     CONF_NEWS_SOURCES,
     CONF_ODDS_THRESHOLD,
     CONF_OPENSTATES_KEY,
+    CONF_POLITICOS,
     CONF_STATE_BILLS,
     CRYSTAL_BALL_FEED,
     DOMAIN,
@@ -39,6 +40,7 @@ from custom_components.boiler_room.const import (
     EVENT_FEC_REPORT,
     EVENT_NEW_HEADLINE,
     EVENT_ODDS_MOVED,
+    EVENT_POLITICO_POST,
     EVENT_RATING_CHANGED,
     EVENT_REP_VOTE,
 )
@@ -52,6 +54,7 @@ COOK = "https://www.cookpolitical.com/api/race"
 FEC = "https://api.open.fec.gov/v1"
 FR = "https://www.federalregister.gov/api/v1/documents.json"
 KALSHI = "https://api.elections.kalshi.com/trade-api/v2"
+BSKY = "https://public.api.bsky.app/xrpc/app.bsky.feed.getAuthorFeed"
 CHALLENGE = (
     "<!DOCTYPE html><html><head><title>Just a moment...</title></head>"
     "<body><script>window._cf_chl_opt={}</script></body></html>"
@@ -330,7 +333,72 @@ def _kalshi(lead: str = "0.6100") -> dict[str, Any]:
     }
 
 
+def _bsky_post(handle: str, name: str, rkey: str, text: str, when: str, repost: bool = False):
+    item = {
+        "post": {
+            "uri": f"at://did:plc:{handle}/app.bsky.feed.post/{rkey}",
+            "author": {
+                "handle": handle,
+                "displayName": name,
+                "avatar": f"https://cdn/{handle}.jpg",
+            },
+            "record": {"text": text, "createdAt": when},
+            "likeCount": 7,
+            "embed": {"external": {"uri": "https://example.com/a", "title": "An analysis"}},
+        }
+    }
+    if repost:
+        item["reason"] = {"$type": "app.bsky.feed.defs#reasonRepost"}
+    return item
+
+
+def _mock_bsky(aioclient_mock: AiohttpClientMocker, extra: list | None = None) -> None:
+    aioclient_mock.get(
+        BSKY,
+        params={"actor": "cookpolitical.com"},
+        json={
+            "feed": (extra or [])
+            + [
+                _bsky_post(
+                    "cookpolitical.com",
+                    "The Cook Political Report",
+                    "c1",
+                    "New ratings",
+                    "2026-11-03T10:00:00Z",
+                ),
+                _bsky_post(
+                    "someone.else",
+                    "Someone",
+                    "r1",
+                    "Reposted thing",
+                    "2026-11-03T11:00:00Z",
+                    repost=True,
+                ),
+            ]
+        },
+    )
+    aioclient_mock.get(
+        BSKY,
+        params={"actor": "kkondik.bsky.social"},
+        json={
+            "feed": [
+                _bsky_post(
+                    "kkondik.bsky.social",
+                    "Kyle Kondik",
+                    "k1",
+                    "Crystal Ball update",
+                    "2026-11-03T12:00:00Z",
+                )
+            ]
+        },
+    )
+    aioclient_mock.get(
+        BSKY, params={"actor": "gone.bsky.social"}, status=400, json={"error": "InvalidRequest"}
+    )
+
+
 def _mock_all(aioclient_mock: AiohttpClientMocker) -> None:
+    _mock_bsky(aioclient_mock)
     _mock_votes(aioclient_mock, [(300, "100", "Yea"), (301, "101", "Yea")])
     aioclient_mock.get(f"{FEC}/elections/", params={"office": "house"}, json=_fec())
     aioclient_mock.get(f"{FEC}/elections/", params={"office": "senate"}, json={"results": []})
@@ -417,6 +485,7 @@ def _entry() -> MockConfigEntry:
             CONF_CUSTOM_FEEDS: FEED,
             CONF_KALSHI: "https://kalshi.com/markets/kxtest/test-seat/kxtest-26",
             CONF_CRYSTAL_BALL: True,
+            CONF_POLITICOS: "cookpolitical.com\n@kkondik.bsky.social\nhttps://bsky.app/profile/gone.bsky.social",
         },
     )
 
@@ -524,6 +593,21 @@ async def test_full_setup(
     assert crystal.attributes["blocked"] is True
     assert ir.async_get(hass).async_get_issue(DOMAIN, "crystal_ball_blocked")
 
+    politico = states["sensor.boiler_room_news_latest_politico_post"]
+    assert politico.state == "Kyle Kondik: Crystal Ball update"
+    assert politico.attributes["entity_picture"] == "https://cdn/kkondik.bsky.social.jpg"
+    # Reposts of other accounts are dropped; the unknown handle is reported, not fatal.
+    assert [p["author"] for p in politico.attributes["posts"]] == [
+        "Kyle Kondik",
+        "The Cook Political Report",
+    ]
+    assert (
+        politico.attributes["posts"][0]["url"]
+        == "https://bsky.app/profile/kkondik.bsky.social/post/k1"
+    )
+    assert politico.attributes["posts"][0]["link_title"] == "An analysis"
+    assert politico.attributes["failed_accounts"] == ["gone.bsky.social"]
+
     # --- Changes fire bus events -------------------------------------------
     bill_events = async_capture_events(hass, EVENT_BILL_ACTION)
     odds_events = async_capture_events(hass, EVENT_ODDS_MOVED)
@@ -532,6 +616,7 @@ async def test_full_setup(
     vote_events = async_capture_events(hass, EVENT_REP_VOTE)
     fec_events = async_capture_events(hass, EVENT_FEC_REPORT)
     exec_events = async_capture_events(hass, EVENT_EXECUTIVE_ACTION)
+    politico_events = async_capture_events(hass, EVENT_POLITICO_POST)
 
     # The first registered mock that matches wins, so register the changes first.
     aioclient_mock.clear_requests()
@@ -560,6 +645,18 @@ async def test_full_setup(
         ("Protecting Test Data", "2026-1", "Executive Order"),
     )
     aioclient_mock.get(f"{KALSHI}/events/KXTEST-26", json=_kalshi(lead="0.5000"))
+    _mock_bsky(
+        aioclient_mock,
+        [
+            _bsky_post(
+                "cookpolitical.com",
+                "The Cook Political Report",
+                "c2",
+                "Rating change: NY-22",
+                "2026-11-03T14:00:00Z",
+            )
+        ],
+    )
     _mock_all(aioclient_mock)
 
     data = entry.runtime_data
@@ -571,6 +668,7 @@ async def test_full_setup(
         data.floor_votes,
         data.finance,
         data.executive,
+        data.politicos,
     ):
         await coordinator.async_refresh()
     await hass.async_block_till_done()
@@ -589,6 +687,9 @@ async def test_full_setup(
         ("Jane Q Smith", 0.0),
     ]
     assert [e.data["title"] for e in exec_events] == ["Second Order"]
+    assert [(e.data["author"], e.data["text"]) for e in politico_events] == [
+        ("The Cook Political Report", "Rating change: NY-22")
+    ]
     unity = hass.states.get("sensor.boiler_room_floor_votes_your_representative_s_party_line_votes")
     assert float(unity.state) == 66.7
     assert [v["roll"] for v in unity.attributes["broke_with_party"]] == [302]
@@ -625,6 +726,7 @@ async def test_setup_with_no_keys(hass: HomeAssistant, aioclient_mock: AiohttpCl
         "calendar.boiler_room_elections_elections",
         "sensor.boiler_room_executive_actions_latest_executive_action",
         "sensor.boiler_room_executive_actions_executive_orders_this_year",
+        "sensor.boiler_room_news_latest_politico_post",
     }
 
 
@@ -826,3 +928,25 @@ async def test_crystal_ball_feed_when_allowed(
     assert [(e.data["title"], e.data["rating_change"]) for e in posts] == [
         ("Senate Rating Change: Maine", True)
     ]
+
+
+async def test_politicos_can_be_turned_off(
+    hass: HomeAssistant, aioclient_mock: AiohttpClientMocker
+) -> None:
+    aioclient_mock.get(FEED, text=_rss(("Hi", "https://x/1", "Tue, 03 Nov 2026 06:00:00 -0500")))
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id=DOMAIN,
+        data={},
+        options={
+            CONF_NEWS_SOURCES: [],
+            CONF_CUSTOM_FEEDS: FEED,
+            CONF_POLITICOS: "None",
+            CONF_EXECUTIVE: False,
+        },
+    )
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    assert entry.runtime_data.politicos is None
+    assert hass.states.get("sensor.boiler_room_news_latest_politico_post") is None
