@@ -72,6 +72,7 @@ from .parsers import (
     current_session,
     fec_cycle,
     is_rating_post,
+    keep_headline,
     merge_elections,
     merge_headlines,
     merge_politico_posts,
@@ -484,12 +485,15 @@ class NewsCoordinator(_Base):
         feeds: list[tuple[str, str]],
         keywords: list[str],
         limit: int,
+        feed_keywords: dict[str, list[str]] | None = None,
     ) -> None:
         super().__init__(hass, entry, "news", INTERVAL_NEWS)
         self._session = session
         self.feeds = feeds
         self._keywords = keywords
         self._limit = limit
+        # Per-feed filters, e.g. only the election pieces from a general magazine.
+        self._feed_keywords = feed_keywords or {}
 
     async def _async_update_data(self) -> NewsData:
         results = await asyncio.gather(
@@ -516,9 +520,11 @@ class NewsCoordinator(_Base):
     async def _fetch(self, name: str, url: str) -> list[Headline]:
         body = await fetch_text(self._session, url)
         try:
-            return parse_feed(body, name)
+            items = parse_feed(body, name)
         except ET.ParseError as err:
             raise BoilerRoomError(f"{name}: not a valid feed ({err})") from err
+        words = self._feed_keywords.get(url)
+        return [h for h in items if keep_headline(h.title, words)] if words else items
 
 
 # --------------------------------------------------------------------------

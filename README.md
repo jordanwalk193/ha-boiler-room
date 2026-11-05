@@ -72,7 +72,8 @@ Keys can be changed later from the integration's **Reconfigure** menu.
 | News outlets | NPR, PBS News Hour, The Hill, Fox News (on by default), plus BBC US and Politico |
 | Politicos | Bluesky handles or bsky.app profile links. Starts with the nonpartisan handicappers: the Cook Political Report, Erin Covey (Cook), Jacob Rubashkin (Inside Elections), Kyle Kondik and Larry Sabato (Crystal Ball) and the UVA Center for Politics. `none` turns it off. |
 | Extra feeds | Any RSS/Atom URL — a local paper, a Substack, or a subreddit like `https://www.reddit.com/r/NeutralPolitics/.rss` |
-| Headline keywords | `Syracuse, Hochul, budget` — keep only headlines that mention one of these |
+| Per-feed keywords | Add keywords after a bar to keep only matching headlines from that one feed: `https://www.theargumentmag.com/feed \| election, midterm, poll` |
+| Headline keywords | `Syracuse, Hochul, budget` — keep only headlines that mention one of these, across every outlet |
 
 ## Dashboard
 

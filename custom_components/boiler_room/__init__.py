@@ -78,6 +78,7 @@ from .coordinator import (
 from .parsers import (
     current_congress,
     parse_bluesky_ref,
+    parse_custom_feeds,
     parse_federal_bill,
     parse_kalshi_ref,
     parse_market_ref,
@@ -220,7 +221,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: BoilerRoomConfigEntry) -
         for key in opts.get(CONF_NEWS_SOURCES, DEFAULT_NEWS_SOURCES)
         if key in NEWS_SOURCES
     ]
-    feeds += [(_feed_name(url), url) for url in split_list(opts.get(CONF_CUSTOM_FEEDS))]
+    custom = parse_custom_feeds(opts.get(CONF_CUSTOM_FEEDS))
+    feeds += [(_feed_name(url), url) for url, _ in custom]
+    feed_keywords = {url: words for url, words in custom if words}
 
     data = BoilerRoomData(
         reps=reps,
@@ -255,6 +258,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: BoilerRoomConfigEntry) -
                 feeds,
                 split_list(opts.get(CONF_NEWS_KEYWORDS)),
                 int(opts.get(CONF_HEADLINE_COUNT, DEFAULT_HEADLINE_COUNT)),
+                feed_keywords,
             )
             if feeds
             else None

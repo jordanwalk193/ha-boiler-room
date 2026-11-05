@@ -9,7 +9,7 @@
  * translation key rather than entity id, so renamed entities keep working.
  */
 const DOMAIN = 'boiler_room';
-const VERSION = '0.4.0';
+const VERSION = '0.4.1';
 
 // Cook's seven-step scale, Solid D to Solid R. Toss Up sits in brass.
 const SCALE = ['Solid D', 'Likely D', 'Lean D', 'Toss Up', 'Lean R', 'Likely R', 'Solid R'];

@@ -68,6 +68,7 @@ from .const import (
 from .parsers import (
     current_congress,
     parse_bluesky_ref,
+    parse_custom_feeds,
     parse_federal_bill,
     parse_kalshi_ref,
     parse_market_ref,
@@ -281,7 +282,7 @@ def validate_options(options: Mapping[str, Any]) -> tuple[dict[str, str], list[s
         if wrong:
             errors[field] = "invalid_entries"
             bad += wrong
-    for url in split_list(options.get(CONF_CUSTOM_FEEDS)):
+    for url, _ in parse_custom_feeds(options.get(CONF_CUSTOM_FEEDS)):
         if not url.startswith(("http://", "https://")):
             errors[CONF_CUSTOM_FEEDS] = "invalid_entries"
             bad.append(url)

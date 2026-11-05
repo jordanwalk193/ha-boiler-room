@@ -135,6 +135,33 @@ def split_list(text: str | None) -> list[str]:
     return [item.strip() for item in re.split(r"[,\n]", text) if item.strip()]
 
 
+def parse_custom_feeds(text: str | None) -> list[tuple[str, list[str]]]:
+    """Extra feeds, one per line, optionally with their own keyword filter:
+
+        https://example.com/feed
+        https://www.theargumentmag.com/feed | election, midterm, poll
+
+    Lines without "|" may still hold several comma-separated URLs (older setups).
+    """
+    out: list[tuple[str, list[str]]] = []
+    for line in (text or "").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        if "|" in line:
+            url, _, words = line.partition("|")
+            out.append((url.strip(), [w.strip() for w in words.split(",") if w.strip()]))
+        else:
+            out += [(u, []) for u in split_list(line)]
+    return out
+
+
+def keep_headline(title: str, keywords: list[str]) -> bool:
+    """True when there's no filter or the title mentions one of the keywords."""
+    lowered = title.lower()
+    return not keywords or any(w.lower() in lowered for w in keywords)
+
+
 # --------------------------------------------------------------------------
 # Representatives (Open States people.geo)
 # --------------------------------------------------------------------------
@@ -751,7 +778,7 @@ def merge_headlines(
         dedupe = headline.title.lower()
         if headline.link in seen or dedupe in seen:
             continue
-        if words and not any(w in headline.title.lower() for w in words):
+        if not keep_headline(headline.title, words):
             continue
         seen.update((headline.link, dedupe))
         merged.append(headline)

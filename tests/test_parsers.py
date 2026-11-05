@@ -17,6 +17,7 @@ from custom_components.boiler_room.parsers import (
     fec_party,
     federal_election_day,
     is_rating_post,
+    keep_headline,
     merge_elections,
     merge_headlines,
     merge_politico_posts,
@@ -24,6 +25,7 @@ from custom_components.boiler_room.parsers import (
     parse_bluesky_posts,
     parse_bluesky_ref,
     parse_civic_elections,
+    parse_custom_feeds,
     parse_event,
     parse_fec_race,
     parse_federal_bill,
@@ -649,3 +651,24 @@ def test_merge_politico_posts_caps_prolific_accounts():
     quiet = parse_bluesky_posts([_post("quiet.x", "q1", "2026-10-01T00:00:00Z")])
     merged = merge_politico_posts([loud, quiet], 10, per_author=2)
     assert [p["handle"] for p in merged] == ["loud.x", "loud.x", "quiet.x"]
+
+
+def test_parse_custom_feeds():
+    text = """https://a.example/feed
+https://b.example/feed | election, Midterm ,
+https://c.example/rss, https://d.example/rss
+
+"""
+    assert parse_custom_feeds(text) == [
+        ("https://a.example/feed", []),
+        ("https://b.example/feed", ["election", "Midterm"]),
+        ("https://c.example/rss", []),
+        ("https://d.example/rss", []),
+    ]
+    assert parse_custom_feeds(None) == []
+
+
+def test_keep_headline():
+    assert keep_headline("Anything", [])
+    assert keep_headline("9 short takes on the 2026 midterms", ["Midterm"])
+    assert not keep_headline("When the Maoists came for Mbappé", ["election", "midterm"])

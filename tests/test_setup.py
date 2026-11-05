@@ -950,3 +950,39 @@ async def test_politicos_can_be_turned_off(
     await hass.async_block_till_done()
     assert entry.runtime_data.politicos is None
     assert hass.states.get("sensor.boiler_room_news_latest_politico_post") is None
+
+
+async def test_per_feed_keywords_only_filter_that_feed(
+    hass: HomeAssistant, aioclient_mock: AiohttpClientMocker
+) -> None:
+    magazine = "https://magazine.example/feed"
+    aioclient_mock.get(
+        FEED, text=_rss(("Budget talks stall", "https://x/1", "Tue, 03 Nov 2026 06:00:00 -0500"))
+    )
+    aioclient_mock.get(
+        magazine,
+        text=_rss(
+            ("Midterm model update", "https://m/1", "Tue, 03 Nov 2026 07:00:00 -0500"),
+            ("Hannah Arendt hates you", "https://m/2", "Tue, 03 Nov 2026 08:00:00 -0500"),
+        ),
+    )
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id=DOMAIN,
+        data={},
+        options={
+            CONF_NEWS_SOURCES: [],
+            CONF_CUSTOM_FEEDS: f"{FEED}\n{magazine} | midterm, election",
+            CONF_POLITICOS: "none",
+            CONF_EXECUTIVE: False,
+        },
+    )
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    titles = [
+        h["title"]
+        for h in hass.states.get("sensor.boiler_room_news_latest_headline").attributes["headlines"]
+    ]
+    # The magazine's off-topic essay is dropped; the unfiltered feed keeps everything.
+    assert titles == ["Midterm model update", "Budget talks stall"]
