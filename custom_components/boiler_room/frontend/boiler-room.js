@@ -529,8 +529,15 @@ class BoilerRoomStrategyElement extends HTMLElement {
   static async generate(config, hass) { return BoilerRoomStrategy.generate(config, hass); }
 }
 
-if (!customElements.get('boiler-room-card')) customElements.define('boiler-room-card', BoilerRoomCard);
-if (!customElements.get('ll-strategy-dashboard-boiler-room')) customElements.define('ll-strategy-dashboard-boiler-room', BoilerRoomStrategyElement);
+// Home Assistant loads extra modules before it swaps in its scoped element
+// registry, so elements defined right away can go missing. Wait until HA's own
+// root element exists, then register on that registry.
+const register = () => {
+  if (!customElements.get('home-assistant')) return setTimeout(register, 40);
+  if (!customElements.get('boiler-room-card')) customElements.define('boiler-room-card', BoilerRoomCard);
+  if (!customElements.get('ll-strategy-dashboard-boiler-room')) customElements.define('ll-strategy-dashboard-boiler-room', BoilerRoomStrategyElement);
+};
+register();
 
 window.customCards = window.customCards || [];
 if (!window.customCards.some(c => c.type === 'boiler-room-card')) {
