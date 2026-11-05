@@ -248,6 +248,7 @@ def parse_market(market: dict[str, Any]) -> dict[str, Any]:
         "end_date": market.get("endDate"),
         "closed": bool(market.get("closed")),
         "url": f"https://polymarket.com/market/{market.get('slug')}",
+        "source": "Polymarket",
     }
 
 
@@ -275,6 +276,7 @@ def parse_event(event: dict[str, Any]) -> dict[str, Any]:
         "end_date": event.get("endDate"),
         "closed": bool(event.get("closed")),
         "url": f"https://polymarket.com/event/{event.get('slug')}",
+        "source": "Polymarket",
     }
 
 
@@ -283,6 +285,305 @@ def _float(value: Any) -> float | None:
         return round(float(value), 2)
     except (TypeError, ValueError):
         return None
+
+
+# --------------------------------------------------------------------------
+# Kalshi
+# --------------------------------------------------------------------------
+# Event tickers look like KXNEXTSPEAKER-31 or KXPRESPARTY-2028; a kalshi.com
+# link ends in the event ticker in lower case.
+
+_KALSHI_URL_RE = re.compile(
+    r"kalshi\.com/markets/[^\s?#]*?/?([a-z][a-z0-9]*-[a-z0-9.-]+)/?(?:[?#]|$)", re.I
+)
+_KALSHI_TICKER_RE = re.compile(r"[a-z][a-z0-9]*-[a-z0-9.-]+", re.I)
+
+
+def parse_kalshi_ref(text: str) -> str | None:
+    """Return an upper-case Kalshi event ticker from a ticker or a kalshi.com link."""
+    raw = text.strip()
+    if "kalshi.com" in raw.lower():
+        match = _KALSHI_URL_RE.search(raw)
+        return match.group(1).upper() if match else None
+    if _KALSHI_TICKER_RE.fullmatch(raw):
+        return raw.upper()
+    return None
+
+
+def _kalshi_pct(market: dict[str, Any]) -> float | None:
+    """Last traded price, or the bid/ask midpoint when nothing has traded."""
+    last = _float(market.get("last_price_dollars"))
+    if last:
+        return round(last * 100, 1)
+    bid = _float(market.get("yes_bid_dollars"))
+    ask = _float(market.get("yes_ask_dollars"))
+    if bid is not None and ask:
+        return round((bid + ask) / 2 * 100, 1)
+    return None
+
+
+def parse_kalshi_event(event: dict[str, Any]) -> dict[str, Any]:
+    """Normalize a Kalshi event into the same shape as a Polymarket item."""
+    markets = [m for m in event.get("markets") or [] if isinstance(m, dict)]
+    live = [m for m in markets if m.get("status") in (None, "active", "open")]
+    pool = live or markets
+    ticker = str(event.get("event_ticker") or "")
+    series = str(event.get("series_ticker") or ticker.split("-")[0])
+    volume = sum(_float(m.get("volume_fp")) or 0 for m in markets)
+    closes = sorted(str(m["close_time"]) for m in pool if m.get("close_time"))
+    base = {
+        "slug": ticker,
+        "title": event.get("title"),
+        "volume": round(volume, 2) if markets else None,
+        "end_date": closes[0] if closes else None,
+        "closed": bool(markets) and not live,
+        "url": f"https://kalshi.com/markets/{series.lower()}",
+        "source": "Kalshi",
+    }
+    if len(pool) == 1 and not event.get("mutually_exclusive"):
+        yes = _kalshi_pct(pool[0])
+        outcomes = {} if yes is None else {"Yes": yes, "No": round(100 - yes, 1)}
+        return {
+            **base,
+            "kind": "market",
+            "probability": yes,
+            "leader": None if yes is None else ("Yes" if yes >= 50 else "No"),
+            "outcomes": outcomes,
+        }
+    outcomes: dict[str, float] = {}
+    for market in pool:
+        label = market.get("yes_sub_title") or market.get("title")
+        pct = _kalshi_pct(market)
+        if label and pct is not None:
+            outcomes[str(label)] = pct
+    ranked = dict(sorted(outcomes.items(), key=lambda kv: kv[1], reverse=True))
+    leader = next(iter(ranked), None)
+    return {
+        **base,
+        "kind": "event",
+        "probability": ranked.get(leader) if leader else None,
+        "leader": leader,
+        "outcomes": ranked,
+    }
+
+
+# --------------------------------------------------------------------------
+# House floor votes (Congress.gov house-vote)
+# --------------------------------------------------------------------------
+
+
+def current_session(today: date) -> int:
+    """Session 1 is the Congress's first (odd) year, session 2 the second."""
+    start_year = 1789 + 2 * (current_congress(today) - 1)
+    return max(1, min(2, today.year - start_year + 1))
+
+
+def newest_rolls(items: list[dict[str, Any]], count: int) -> list[dict[str, Any]]:
+    """Congress.gov lists roll calls in no useful order; keep the newest few."""
+    rolls = [i for i in items if isinstance(i, dict) and i.get("rollCallNumber")]
+    rolls.sort(
+        key=lambda i: (str(i.get("startDate") or ""), int(i["rollCallNumber"])), reverse=True
+    )
+    return rolls[:count]
+
+
+def vote_bill_label(kind: Any, number: Any) -> str | None:
+    if not kind or not number:
+        return None
+    label = BILL_LABELS.get(str(kind).lower().replace(".", ""))
+    return f"{label} {number}" if label else f"{kind} {number}"
+
+
+_VOTE_CHOICES = {"yea": "Yea", "aye": "Yea", "yes": "Yea", "nay": "Nay", "no": "Nay"}
+
+
+def _cast(value: Any) -> str | None:
+    if value in (None, ""):
+        return None
+    text = str(value).strip()
+    return _VOTE_CHOICES.get(text.lower(), text)
+
+
+def parse_house_vote(
+    detail: dict[str, Any],
+    members: list[dict[str, Any]],
+    bioguide_ids: list[str],
+) -> dict[str, Any]:
+    """One roll call, with party totals and how each followed member voted."""
+    parties: dict[str, dict[str, int]] = {}
+    for row in detail.get("votePartyTotal") or []:
+        code = row.get("voteParty") or (row.get("party") or {}).get("type")
+        if not code:
+            continue
+        parties[str(code)] = {
+            "yea": int(row.get("yeaTotal") or 0),
+            "nay": int(row.get("nayTotal") or 0),
+            "present": int(row.get("presentTotal") or 0),
+            "not_voting": int(row.get("notVotingTotal") or 0),
+        }
+    totals = {
+        k: sum(p[k] for p in parties.values()) for k in ("yea", "nay", "present", "not_voting")
+    }
+    wanted = {b.upper() for b in bioguide_ids if b}
+    member_votes: dict[str, dict[str, Any]] = {}
+    for row in members:
+        bid = str(row.get("bioguideID") or row.get("bioguideId") or "").upper()
+        if bid not in wanted:
+            continue
+        cast = _cast(row.get("voteCast"))
+        party = row.get("voteParty")
+        member_votes[bid] = {
+            "vote": cast,
+            "party": party,
+            "with_party": with_party(cast, parties.get(str(party)) if party else None),
+        }
+    return {
+        "roll": int(detail.get("rollCallNumber") or 0),
+        "congress": detail.get("congress"),
+        "session": detail.get("sessionNumber"),
+        "date": detail.get("startDate"),
+        "question": detail.get("voteQuestion"),
+        "result": detail.get("result"),
+        "vote_type": detail.get("voteType"),
+        "bill": vote_bill_label(detail.get("legislationType"), detail.get("legislationNumber")),
+        "bill_url": detail.get("legislationUrl"),
+        "clerk_url": detail.get("sourceDataURL"),
+        "parties": parties,
+        "totals": totals,
+        "members": member_votes,
+    }
+
+
+def with_party(cast: str | None, party_totals: dict[str, int] | None) -> bool | None:
+    """Did the member vote with most of their party? None when it doesn't apply."""
+    if cast not in ("Yea", "Nay") or not party_totals:
+        return None
+    yea, nay = party_totals.get("yea", 0), party_totals.get("nay", 0)
+    if yea == nay:
+        return None
+    return cast == ("Yea" if yea > nay else "Nay")
+
+
+def party_unity(votes: list[dict[str, Any]], bioguide_id: str) -> float | None:
+    """Share of recent roll calls where the member sided with their party's majority."""
+    flags = [
+        v["members"][bioguide_id]["with_party"]
+        for v in votes
+        if bioguide_id in v.get("members", {})
+        and v["members"][bioguide_id]["with_party"] is not None
+    ]
+    if not flags:
+        return None
+    return round(100 * sum(flags) / len(flags), 1)
+
+
+# --------------------------------------------------------------------------
+# Campaign finance (OpenFEC)
+# --------------------------------------------------------------------------
+
+
+def fec_cycle(today: date) -> int:
+    """FEC two-year cycles are named for the election year."""
+    return today.year if today.year % 2 == 0 else today.year + 1
+
+
+_NAME_SUFFIXES = {"JR", "SR", "II", "III", "IV", "V"}
+_NAME_DROP = {"MR", "MRS", "MS", "DR", "HON"}
+
+
+def _cap(word: str) -> str:
+    if len(word) <= 2 and word.endswith("."):
+        return word.upper()
+    out = "-".join(
+        "'".join(p[:1].upper() + p[1:].lower() for p in part.split("'")) for part in word.split("-")
+    )
+    if out.startswith("Mc") and len(out) > 2:
+        out = "Mc" + out[2].upper() + out[3:]
+    return out
+
+
+def fec_display_name(name: str | None) -> str | None:
+    """'COLLINS, MICHAEL A JR' -> 'Michael A Collins Jr'."""
+    if not name:
+        return None
+    if "," not in name:
+        return " ".join(_cap(w) for w in name.split())
+    last, rest = name.split(",", 1)
+    words = [w for w in rest.replace(",", " ").split() if w.upper().strip(".") not in _NAME_DROP]
+    suffix = [w for w in words if w.upper().strip(".") in _NAME_SUFFIXES]
+    first = [w for w in words if w not in suffix]
+    # Jr/Sr read as words; II/III/IV stay as numerals.
+    tail = [_cap(w) if w.upper().strip(".") in ("JR", "SR") else w.upper() for w in suffix]
+    return " ".join([*(_cap(w) for w in first), _cap(last.strip()), *tail])
+
+
+def fec_party(text: str | None) -> str | None:
+    if not text:
+        return None
+    clean = re.sub(r"\s+PARTY$", "", str(text).strip(), flags=re.I)
+    return clean.title() if clean else None
+
+
+def parse_fec_race(results: list[dict[str, Any]], limit: int = 10) -> list[dict[str, Any]]:
+    """Candidates in a race, biggest raiser first, skipping ones who never reported money."""
+    out = []
+    for row in results:
+        raised = _float(row.get("total_receipts")) or 0.0
+        cash = _float(row.get("cash_on_hand_end_period")) or 0.0
+        incumbent = row.get("incumbent_challenge_full")
+        if not raised and not cash and incumbent != "Incumbent":
+            continue
+        cid = row.get("candidate_id")
+        out.append(
+            {
+                "name": fec_display_name(row.get("candidate_name")),
+                "party": fec_party(row.get("party_full")),
+                "status": incumbent,
+                "raised": raised,
+                "spent": _float(row.get("total_disbursements")) or 0.0,
+                "cash_on_hand": cash,
+                "through": row.get("coverage_end_date"),
+                "candidate_id": cid,
+                "url": f"https://www.fec.gov/data/candidate/{cid}/" if cid else None,
+            }
+        )
+    out.sort(key=lambda c: c["raised"], reverse=True)
+    return out[:limit]
+
+
+# --------------------------------------------------------------------------
+# Presidential documents (Federal Register)
+# --------------------------------------------------------------------------
+
+
+def parse_presidential_documents(payload: Any) -> list[dict[str, Any]]:
+    docs = []
+    for row in (payload or {}).get("results") or [] if isinstance(payload, dict) else []:
+        kind = row.get("subtype") or "Presidential Document"
+        number = row.get("executive_order_number") or row.get("presidential_document_number")
+        docs.append(
+            {
+                "title": _clean(row.get("title")) or None,
+                "kind": kind,
+                "number": str(number) if number else None,
+                "signed": row.get("signing_date"),
+                "published": row.get("publication_date"),
+                "president": (row.get("president") or {}).get("name"),
+                "document_number": row.get("document_number"),
+                "url": row.get("html_url"),
+                "pdf_url": row.get("pdf_url"),
+                "abstract": _clean(row.get("abstract")) or None,
+            }
+        )
+    return docs
+
+
+_RATING_POST_RE = re.compile(r"rating change|ratings change|race ratings|final ratings", re.I)
+
+
+def is_rating_post(title: str | None) -> bool:
+    """Crystal Ball headlines that announce rating moves."""
+    return bool(title and _RATING_POST_RE.search(title))
 
 
 # --------------------------------------------------------------------------

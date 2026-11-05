@@ -12,15 +12,20 @@ import xml.etree.ElementTree as ET
 
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed
+from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.util import dt as dt_util
 
 from .api import (
     AuthError,
+    BlockedError,
     BoilerRoomError,
     CivicClient,
     CongressClient,
     CookClient,
+    FecClient,
+    FederalRegisterClient,
+    KalshiClient,
     NotFoundError,
     OpenStatesClient,
     PolymarketClient,
@@ -28,14 +33,25 @@ from .api import (
 )
 from .const import (
     COOK_CHAMBERS,
+    CRYSTAL_BALL_FEED,
+    CRYSTAL_BALL_URL,
     DOMAIN,
     EVENT_BILL_ACTION,
+    EVENT_CRYSTAL_BALL_POST,
+    EVENT_EXECUTIVE_ACTION,
+    EVENT_FEC_REPORT,
     EVENT_NEW_HEADLINE,
     EVENT_ODDS_MOVED,
     EVENT_RATING_CHANGED,
+    EVENT_REP_VOTE,
+    FLOOR_VOTES_KEPT,
     INTERVAL_COOK,
+    INTERVAL_CRYSTAL_BALL,
     INTERVAL_ELECTIONS,
+    INTERVAL_EXECUTIVE,
+    INTERVAL_FEC,
     INTERVAL_FEDERAL_BILLS,
+    INTERVAL_FLOOR_VOTES,
     INTERVAL_MARKETS,
     INTERVAL_NEWS,
     INTERVAL_REPS,
@@ -48,13 +64,22 @@ from .parsers import (
     assign_rep_slots,
     computed_federal_elections,
     cook_race_key,
+    current_congress,
+    current_session,
+    fec_cycle,
+    is_rating_post,
     merge_elections,
     merge_headlines,
+    newest_rolls,
     parse_civic_elections,
     parse_cook_race,
     parse_event,
+    parse_fec_race,
     parse_feed,
+    parse_house_vote,
+    parse_kalshi_event,
     parse_market,
+    parse_presidential_documents,
     summarize_ratings,
 )
 
@@ -365,10 +390,14 @@ class MarketsCoordinator(_Base):
         client: PolymarketClient,
         slugs: list[str],
         threshold: float,
+        kalshi: KalshiClient | None = None,
+        kalshi_tickers: list[str] | None = None,
     ) -> None:
         super().__init__(hass, entry, "markets", INTERVAL_MARKETS)
         self._client = client
-        self.slugs = slugs
+        self._kalshi = kalshi
+        # Polymarket slugs as-is; Kalshi tickers as "kalshi:TICKER" so the two never collide.
+        self.slugs = slugs + [f"kalshi:{t}" for t in kalshi_tickers or []]
         self._threshold = threshold
 
     async def _async_update_data(self) -> dict[str, dict[str, Any] | None]:
@@ -385,11 +414,19 @@ class MarketsCoordinator(_Base):
             else:
                 data[slug] = result
         if self.slugs and failures == len(self.slugs) and not self.data:
-            raise UpdateFailed("Polymarket did not return any of the configured markets")
+            raise UpdateFailed("None of the configured prediction markets could be read")
         self._fire_moves(data)
         return data
 
     async def _fetch(self, slug: str) -> dict[str, Any] | None:
+        if slug.startswith("kalshi:"):
+            assert self._kalshi
+            ticker = slug.removeprefix("kalshi:")
+            if event := await self._kalshi.event(ticker):
+                return parse_kalshi_event(event)
+            if market := await self._kalshi.market(ticker):
+                return parse_kalshi_event({**market, "markets": [market]})
+            return None
         if market := await self._client.market(slug):
             return parse_market(market)
         if event := await self._client.event(slug):
@@ -416,6 +453,7 @@ class MarketsCoordinator(_Base):
                         "to": pct,
                         "change": round(pct - before, 1),
                         "url": item["url"],
+                        "source": item.get("source"),
                     },
                 )
 
@@ -588,3 +626,312 @@ class CookCoordinator(_Base):
             r for r in self.data.races.values() if r["chamber"] == chamber and r["state"] == state
         ]
         return matches[0] if matches else None
+
+
+# --------------------------------------------------------------------------
+# House floor votes
+# --------------------------------------------------------------------------
+
+
+@dataclass
+class VotesData:
+    votes: list[dict[str, Any]] = field(default_factory=list)
+    rep_bioguide: str | None = None
+    rep_name: str | None = None
+    session_label: str | None = None
+
+
+class FloorVotesCoordinator(_Base):
+    """Recent House roll calls and how your representative voted on each.
+
+    Roll calls never change once they're posted, so each one is fetched once and
+    kept; an hourly check only pulls the session list plus anything new.
+    """
+
+    def __init__(
+        self,
+        hass: HomeAssistant,
+        entry: ConfigEntry,
+        client: CongressClient,
+        rep: Callable[[], dict[str, Any] | None],
+        keep: int = FLOOR_VOTES_KEPT,
+    ) -> None:
+        super().__init__(hass, entry, "floor_votes", INTERVAL_FLOOR_VOTES)
+        self._client = client
+        self._rep = rep
+        self._keep = keep
+        self._cache: dict[tuple[int, int, int], dict[str, Any]] = {}
+
+    async def _session_items(self, congress: int, session: int) -> list[dict[str, Any]]:
+        items: list[dict[str, Any]] = []
+        offset = 0
+        for _ in range(6):  # a busy session runs ~700 roll calls
+            page = await self._client.house_votes(congress, session, offset=offset)
+            batch = page.get("houseRollCallVotes") or []
+            items += batch
+            total = (page.get("pagination") or {}).get("count") or 0
+            offset += len(batch)
+            if not batch or offset >= total:
+                break
+        return items
+
+    async def _async_update_data(self) -> VotesData:
+        today = dt_util.now().date()
+        congress, session = current_congress(today), current_session(today)
+        rep = self._rep() or {}
+        bioguide = rep.get("bioguide_id")
+        try:
+            items = await self._session_items(congress, session)
+            if not items and session == 2:
+                session = 1  # early January: nothing on the floor yet this session
+                items = await self._session_items(congress, session)
+            wanted = newest_rolls(items, self._keep)
+            missing = [
+                int(i["rollCallNumber"])
+                for i in wanted
+                if (congress, session, int(i["rollCallNumber"])) not in self._cache
+            ]
+            fetched = await asyncio.gather(
+                *(self._fetch(congress, session, roll, bioguide) for roll in missing),
+                return_exceptions=True,
+            )
+        except AuthError as err:
+            raise ConfigEntryAuthFailed(str(err)) from err
+        except BoilerRoomError as err:
+            raise UpdateFailed(str(err)) from err
+        for roll, result in zip(missing, fetched, strict=True):
+            if isinstance(result, AuthError):
+                raise ConfigEntryAuthFailed(str(result))
+            if isinstance(result, BaseException):
+                _LOGGER.debug("House roll call %s: %s", roll, result)
+                continue
+            self._cache[(congress, session, roll)] = result
+        votes = [
+            self._cache[key]
+            for i in wanted
+            if (key := (congress, session, int(i["rollCallNumber"]))) in self._cache
+        ]
+        # Drop cache entries that scrolled off, so memory stays flat.
+        keep = {(congress, session, v["roll"]) for v in votes}
+        self._cache = {k: v for k, v in self._cache.items() if k in keep}
+        data = VotesData(
+            votes=votes,
+            rep_bioguide=bioguide.upper() if bioguide else None,
+            rep_name=rep.get("name"),
+            session_label=f"{congress}th Congress, session {session}",
+        )
+        self._fire_new(data)
+        return data
+
+    async def _fetch(
+        self, congress: int, session: int, roll: int, bioguide: str | None
+    ) -> dict[str, Any]:
+        detail, members = await asyncio.gather(
+            self._client.house_vote(congress, session, roll),
+            self._client.house_vote_members(congress, session, roll),
+        )
+        return parse_house_vote(detail, members, [bioguide] if bioguide else [])
+
+    def _fire_new(self, new: VotesData) -> None:
+        if self.data is None or not new.rep_bioguide:
+            return  # first load: everything is "new", so stay quiet
+        seen = {v["roll"] for v in self.data.votes}
+        for vote in reversed(new.votes):
+            mine = vote["members"].get(new.rep_bioguide)
+            if vote["roll"] in seen or not mine:
+                continue
+            self.hass.bus.async_fire(
+                EVENT_REP_VOTE,
+                {
+                    "representative": new.rep_name,
+                    "vote": mine["vote"],
+                    "with_party": mine["with_party"],
+                    "roll": vote["roll"],
+                    "question": vote["question"],
+                    "bill": vote["bill"],
+                    "result": vote["result"],
+                    "date": vote["date"],
+                    "url": vote["bill_url"] or vote["clerk_url"],
+                },
+            )
+
+
+# --------------------------------------------------------------------------
+# Campaign finance
+# --------------------------------------------------------------------------
+
+
+class CampaignFinanceCoordinator(_Base):
+    """FEC money totals for the races that cover home."""
+
+    def __init__(
+        self,
+        hass: HomeAssistant,
+        entry: ConfigEntry,
+        client: FecClient,
+        home_state: Callable[[], str | None],
+        home_district: Callable[[], int | None],
+        personal_key: bool,
+    ) -> None:
+        super().__init__(hass, entry, "campaign_finance", INTERVAL_FEC)
+        self._client = client
+        self._home_state = home_state
+        self._home_district = home_district
+        self._personal_key = personal_key
+
+    def races(self) -> list[str]:
+        cycle = fec_cycle(dt_util.now().date())
+        offices = []
+        if self._home_state() and self._home_district() is not None:
+            offices.append("house")
+        if self._home_state():
+            offices.append("senate")
+        if cycle % 4 == 0:
+            offices.append("president")
+        return offices
+
+    async def _async_update_data(self) -> dict[str, dict[str, Any]]:
+        cycle = fec_cycle(dt_util.now().date())
+        state, district = self._home_state(), self._home_district()
+        data: dict[str, dict[str, Any]] = {}
+        for office in self.races():
+            try:
+                rows = await self._client.race(cycle, office, state, district)
+            except AuthError as err:
+                if self._personal_key:
+                    raise ConfigEntryAuthFailed(str(err)) from err
+                raise UpdateFailed(f"FEC demo key refused: {err}") from err
+            except BoilerRoomError as err:
+                if self.data and office in self.data:
+                    _LOGGER.debug("FEC %s: %s (keeping last totals)", office, err)
+                    data[office] = self.data[office]
+                    continue
+                raise UpdateFailed(str(err)) from err
+            data[office] = {
+                "office": office,
+                "cycle": cycle,
+                "state": state if office != "president" else None,
+                "district": district if office == "house" else None,
+                "candidates": parse_fec_race(rows),
+            }
+        self._fire_reports(data)
+        return data
+
+    def _fire_reports(self, new: dict[str, dict[str, Any]]) -> None:
+        if not self.data:
+            return
+        for office, race in new.items():
+            before = {
+                c["candidate_id"]: c for c in (self.data.get(office) or {}).get("candidates", [])
+            }
+            for cand in race["candidates"]:
+                old = before.get(cand["candidate_id"])
+                if old and cand["through"] and cand["through"] != old["through"]:
+                    self.hass.bus.async_fire(
+                        EVENT_FEC_REPORT,
+                        {
+                            "office": office,
+                            "candidate": cand["name"],
+                            "party": cand["party"],
+                            "raised": cand["raised"],
+                            "raised_since_last": round(cand["raised"] - old["raised"], 2),
+                            "cash_on_hand": cand["cash_on_hand"],
+                            "through": cand["through"],
+                            "url": cand["url"],
+                        },
+                    )
+
+
+# --------------------------------------------------------------------------
+# Executive actions
+# --------------------------------------------------------------------------
+
+
+@dataclass
+class ExecutiveData:
+    documents: list[dict[str, Any]] = field(default_factory=list)
+    executive_orders_this_year: int | None = None
+
+
+class ExecutiveCoordinator(_Base):
+    """Executive orders, proclamations and memoranda as published in the Federal Register."""
+
+    def __init__(
+        self, hass: HomeAssistant, entry: ConfigEntry, client: FederalRegisterClient
+    ) -> None:
+        super().__init__(hass, entry, "executive", INTERVAL_EXECUTIVE)
+        self._client = client
+
+    async def _async_update_data(self) -> ExecutiveData:
+        year = dt_util.now().year
+        try:
+            docs = parse_presidential_documents(await self._client.presidential_documents())
+            count = await self._client.executive_order_count(f"{year}-01-01")
+        except BoilerRoomError as err:
+            raise UpdateFailed(str(err)) from err
+        data = ExecutiveData(docs, count)
+        if self.data is not None:
+            seen = {d["document_number"] for d in self.data.documents}
+            for doc in reversed(docs):
+                if doc["document_number"] not in seen:
+                    self.hass.bus.async_fire(EVENT_EXECUTIVE_ACTION, doc)
+        return data
+
+
+# --------------------------------------------------------------------------
+# Sabato's Crystal Ball (opt-in)
+# --------------------------------------------------------------------------
+
+ISSUE_CRYSTAL_BALL_BLOCKED = "crystal_ball_blocked"
+
+
+@dataclass
+class CrystalBallData:
+    posts: list[Headline] = field(default_factory=list)
+    blocked: bool = False
+    last_success: str | None = None
+
+
+class CrystalBallCoordinator(_Base):
+    """Crystal Ball articles from its official feed, when the site lets us read it.
+
+    The site's bot challenge usually refuses non-browser clients. When that
+    happens this raises a Repairs issue explaining it and keeps the last posts it
+    did get; it never tries to get past the challenge.
+    """
+
+    def __init__(self, hass: HomeAssistant, entry: ConfigEntry, session: Any) -> None:
+        super().__init__(hass, entry, "crystal_ball", INTERVAL_CRYSTAL_BALL)
+        self._session = session
+
+    async def _async_update_data(self) -> CrystalBallData:
+        previous = self.data or CrystalBallData()
+        try:
+            body = await fetch_text(self._session, CRYSTAL_BALL_FEED)
+            posts = parse_feed(body, "Sabato's Crystal Ball")
+        except BlockedError as err:
+            _LOGGER.debug("Crystal Ball: %s", err)
+            ir.async_create_issue(
+                self.hass,
+                DOMAIN,
+                ISSUE_CRYSTAL_BALL_BLOCKED,
+                is_fixable=False,
+                is_persistent=False,
+                severity=ir.IssueSeverity.WARNING,
+                translation_key=ISSUE_CRYSTAL_BALL_BLOCKED,
+                learn_more_url=CRYSTAL_BALL_URL,
+            )
+            return CrystalBallData(previous.posts, True, previous.last_success)
+        except (BoilerRoomError, ET.ParseError) as err:
+            raise UpdateFailed(f"Crystal Ball feed: {err}") from err
+        ir.async_delete_issue(self.hass, DOMAIN, ISSUE_CRYSTAL_BALL_BLOCKED)
+        posts.sort(key=lambda h: h.published or dt_util.utc_from_timestamp(0), reverse=True)
+        if self.data is not None and self.data.posts:
+            seen = {h.link for h in self.data.posts}
+            for post in reversed(posts):
+                if post.link not in seen:
+                    self.hass.bus.async_fire(
+                        EVENT_CRYSTAL_BALL_POST,
+                        {**post.as_dict(), "rating_change": is_rating_post(post.title)},
+                    )
+        return CrystalBallData(posts[:15], False, dt_util.utcnow().isoformat())

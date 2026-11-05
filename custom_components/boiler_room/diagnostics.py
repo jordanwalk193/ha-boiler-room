@@ -13,6 +13,7 @@ from .const import (
     CONF_CONGRESS_KEY,
     CONF_COOK_EMAIL,
     CONF_COOK_PASSWORD,
+    CONF_FEC_KEY,
     CONF_OPENSTATES_KEY,
 )
 
@@ -22,6 +23,7 @@ REDACT = {
     CONF_CIVIC_KEY,
     CONF_COOK_EMAIL,
     CONF_COOK_PASSWORD,
+    CONF_FEC_KEY,
     "email",
 }
 
@@ -50,4 +52,26 @@ async def async_get_config_entry_diagnostics(
         "cook_fields": data.cook.data.raw_keys if data.cook and data.cook.data else None,
         "cook_summaries": data.cook.data.summaries if data.cook and data.cook.data else None,
         "elections": [{**e, "date": e["date"].isoformat()} for e in data.elections.data or []],
+        "floor_votes": (
+            {
+                "session": data.floor_votes.data.session_label,
+                "rep_bioguide": data.floor_votes.data.rep_bioguide,
+                "rolls": [v["roll"] for v in data.floor_votes.data.votes],
+            }
+            if data.floor_votes and data.floor_votes.data
+            else None
+        ),
+        "campaign_finance": data.finance.data if data.finance else None,
+        "executive_count": (
+            len(data.executive.data.documents) if data.executive and data.executive.data else None
+        ),
+        "crystal_ball": (
+            {
+                "blocked": data.crystal_ball.data.blocked,
+                "posts": len(data.crystal_ball.data.posts),
+                "last_success": data.crystal_ball.data.last_success,
+            }
+            if data.crystal_ball and data.crystal_ball.data
+            else None
+        ),
     }

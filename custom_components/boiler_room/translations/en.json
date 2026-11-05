@@ -3,33 +3,36 @@
     "step": {
       "user": {
         "title": "Boiler Room",
-        "description": "Every key is optional and free. Each one unlocks more entities — you can add or change them later from Reconfigure.\n\n- **Congress.gov** — your members of Congress, their newest bills, and federal bills you follow. [Get a key]({congress_url})\n- **Open States** — finds your state and federal legislators from your home location, and tracks state bills. [Get a key]({openstates_url})\n- **Google Civic** — official election listings for your state. [Enable the API]({civic_url})\n- **Cook Political Report** — Cook's race ratings, toss-up counts and your home races. Uses your own Cook login; your plan needs API access. [About the API]({cook_url})\n\nPrediction markets, news and federal Election Day work with no keys at all.",
+        "description": "Every key is optional and free. Each one unlocks more entities — you can add or change them later from Reconfigure.\n\n- **Congress.gov** — your members of Congress, their newest bills, and federal bills you follow. [Get a key]({congress_url})\n- **Open States** — finds your state and federal legislators from your home location, and tracks state bills. [Get a key]({openstates_url})\n- **Google Civic** — official election listings for your state. [Enable the API]({civic_url})\n- **Cook Political Report** — Cook's race ratings, toss-up counts and your home races. Uses your own Cook login; your plan needs API access. [About the API]({cook_url})\n- **FEC (api.data.gov)** — campaign money for your races. Leave blank to use the shared demo key, which is enough for a home's worth of races. [Get a key]({fec_url})\n\nPrediction markets (Polymarket and Kalshi), news, executive orders and federal Election Day work with no keys at all.",
         "data": {
           "congress_api_key": "Congress.gov API key",
           "openstates_api_key": "Open States API key",
           "civic_api_key": "Google Civic Information API key",
+          "fec_api_key": "FEC (api.data.gov) API key",
           "cook_email": "Cook Political Report email",
           "cook_password": "Cook Political Report password"
         }
       },
       "reconfigure": {
         "title": "Update API keys",
-        "description": "Change, add or clear keys. [Congress.gov]({congress_url}) · [Open States]({openstates_url}) · [Google Civic]({civic_url}) · [Cook API]({cook_url})",
+        "description": "Change, add or clear keys. [Congress.gov]({congress_url}) · [Open States]({openstates_url}) · [Google Civic]({civic_url}) · [Cook API]({cook_url}) · [FEC]({fec_url})",
         "data": {
           "congress_api_key": "Congress.gov API key",
           "openstates_api_key": "Open States API key",
           "civic_api_key": "Google Civic Information API key",
+          "fec_api_key": "FEC (api.data.gov) API key",
           "cook_email": "Cook Political Report email",
           "cook_password": "Cook Political Report password"
         }
       },
       "reauth_confirm": {
         "title": "An API key stopped working",
-        "description": "One of your keys was rejected. Update it, or clear it to turn that source off. [Congress.gov]({congress_url}) · [Open States]({openstates_url}) · [Google Civic]({civic_url}) · [Cook API]({cook_url})",
+        "description": "One of your keys was rejected. Update it, or clear it to turn that source off. [Congress.gov]({congress_url}) · [Open States]({openstates_url}) · [Google Civic]({civic_url}) · [Cook API]({cook_url}) · [FEC]({fec_url})",
         "data": {
           "congress_api_key": "Congress.gov API key",
           "openstates_api_key": "Open States API key",
           "civic_api_key": "Google Civic Information API key",
+          "fec_api_key": "FEC (api.data.gov) API key",
           "cook_email": "Cook Political Report email",
           "cook_password": "Cook Political Report password"
         }
@@ -63,7 +66,12 @@
           "news_sources": "News outlets",
           "custom_feeds": "Extra RSS/Atom feeds",
           "news_keywords": "Headline keywords",
-          "headline_count": "Headlines to keep"
+          "headline_count": "Headlines to keep",
+          "kalshi_markets": "Kalshi markets or events",
+          "floor_votes": "House floor votes",
+          "campaign_finance": "Campaign finance",
+          "executive_actions": "Executive actions",
+          "crystal_ball": "Sabato's Crystal Ball articles (experimental)"
         },
         "data_description": {
           "state": "Auto works when an Open States key is set. Without it, pick your state for senators from Congress.gov.",
@@ -75,7 +83,12 @@
           "news_sources": "Established outlets with working feeds, picked to span the spectrum.",
           "custom_feeds": "Any RSS or Atom link, one per line — a subreddit's .rss link, your local paper, a Substack.",
           "news_keywords": "Comma-separated. When set, only headlines containing one of these are kept.",
-          "headline_count": "How many recent headlines the sensor keeps in its attributes."
+          "headline_count": "How many recent headlines the sensor keeps in its attributes.",
+          "kalshi_markets": "Paste a kalshi.com market link, or the event ticker (e.g. KXNEXTSPEAKER-31).",
+          "floor_votes": "Recent House roll calls and how your representative voted. Needs a Congress.gov key. (The Senate's vote site blocks automated readers, so Senate votes aren't included.)",
+          "campaign_finance": "Money raised, spent and on hand for every candidate in your House and Senate races (and the presidential race in presidential cycles), from the FEC.",
+          "executive_actions": "Executive orders, proclamations and memoranda as published in the Federal Register.",
+          "crystal_ball": "Reads the UVA Center for Politics' official Crystal Ball article feed. The site often blocks automated readers; if it blocks yours, Home Assistant shows a repair notice and this stays empty. Crystal Ball's ratings themselves are only published as maps, so they can't be read as data."
         }
       }
     },
@@ -123,6 +136,33 @@
       },
       "cook_home_governor": {
         "name": "Cook rating: your governor's race"
+      },
+      "crystal_ball_latest": {
+        "name": "Crystal Ball latest"
+      },
+      "latest_house_vote": {
+        "name": "Latest House vote"
+      },
+      "rep_last_vote": {
+        "name": "Your representative's last vote"
+      },
+      "rep_party_unity": {
+        "name": "Your representative's party-line votes"
+      },
+      "fec_house": {
+        "name": "Top fundraiser: your House race"
+      },
+      "fec_senate": {
+        "name": "Top fundraiser: your Senate race"
+      },
+      "fec_president": {
+        "name": "Top fundraiser: presidential race"
+      },
+      "latest_executive_action": {
+        "name": "Latest executive action"
+      },
+      "executive_orders_this_year": {
+        "name": "Executive orders this year"
       }
     },
     "binary_sensor": {
@@ -134,6 +174,12 @@
       "elections": {
         "name": "Elections"
       }
+    }
+  },
+  "issues": {
+    "crystal_ball_blocked": {
+      "title": "Sabato's Crystal Ball is blocking Boiler Room",
+      "description": "The UVA Center for Politics website answered Boiler Room's request for its Crystal Ball article feed with a bot check instead of the feed. Boiler Room doesn't try to get around those checks, so Crystal Ball articles can't be shown from this network right now.\n\nNothing is broken on your side. Boiler Room keeps checking hourly and this notice clears itself if the site starts allowing it. To stop the checks, turn off **Sabato's Crystal Ball articles** in Boiler Room's Configure screen. You can still read the Crystal Ball in your browser."
     }
   }
 }

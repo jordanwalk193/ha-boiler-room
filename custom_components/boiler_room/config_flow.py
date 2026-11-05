@@ -9,6 +9,7 @@ from homeassistant.config_entries import ConfigFlow, ConfigFlowResult, OptionsFl
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.selector import (
+    BooleanSelector,
     NumberSelector,
     NumberSelectorConfig,
     NumberSelectorMode,
@@ -29,17 +30,24 @@ from .api import (
     CivicClient,
     CongressClient,
     CookClient,
+    FecClient,
     OpenStatesClient,
 )
 from .const import (
+    CONF_CAMPAIGN_FINANCE,
     CONF_CIVIC_KEY,
     CONF_CONGRESS_KEY,
     CONF_COOK_EMAIL,
     CONF_COOK_PASSWORD,
+    CONF_CRYSTAL_BALL,
     CONF_CUSTOM_FEEDS,
     CONF_DISTRICT,
+    CONF_EXECUTIVE,
+    CONF_FEC_KEY,
     CONF_FEDERAL_BILLS,
+    CONF_FLOOR_VOTES,
     CONF_HEADLINE_COUNT,
+    CONF_KALSHI,
     CONF_MARKETS,
     CONF_NEWS_KEYWORDS,
     CONF_NEWS_SOURCES,
@@ -58,6 +66,7 @@ from .const import (
 from .parsers import (
     current_congress,
     parse_federal_bill,
+    parse_kalshi_ref,
     parse_market_ref,
     parse_state_bill,
     split_list,
@@ -71,6 +80,7 @@ KEYS_SCHEMA = vol.Schema(
         vol.Optional(CONF_CONGRESS_KEY): _SECRET,
         vol.Optional(CONF_OPENSTATES_KEY): _SECRET,
         vol.Optional(CONF_CIVIC_KEY): _SECRET,
+        vol.Optional(CONF_FEC_KEY): _SECRET,
         vol.Optional(CONF_COOK_EMAIL): TextSelector(
             TextSelectorConfig(type=TextSelectorType.EMAIL, autocomplete="username")
         ),
@@ -83,6 +93,10 @@ DEFAULT_OPTIONS: dict[str, Any] = {
     CONF_NEWS_SOURCES: DEFAULT_NEWS_SOURCES,
     CONF_HEADLINE_COUNT: DEFAULT_HEADLINE_COUNT,
     CONF_ODDS_THRESHOLD: DEFAULT_ODDS_THRESHOLD,
+    CONF_FLOOR_VOTES: True,
+    CONF_CAMPAIGN_FINANCE: True,
+    CONF_EXECUTIVE: True,
+    CONF_CRYSTAL_BALL: False,
 }
 
 LINKS = {
@@ -90,6 +104,7 @@ LINKS = {
     "openstates_url": "https://open.pluralpolicy.com/accounts/profile/",
     "civic_url": "https://console.cloud.google.com/apis/library/civicinfo.googleapis.com",
     "cook_url": "https://www.cookpolitical.com/api",
+    "fec_url": "https://api.data.gov/signup/",
 }
 
 
@@ -101,6 +116,7 @@ async def _validate_keys(hass: HomeAssistant, data: Mapping[str, Any]) -> dict[s
         (CONF_CONGRESS_KEY, lambda k: CongressClient(session, k).validate()),
         (CONF_OPENSTATES_KEY, lambda k: OpenStatesClient(session, k).validate()),
         (CONF_CIVIC_KEY, lambda k: CivicClient(session, k).validate()),
+        (CONF_FEC_KEY, lambda k: FecClient(session, k).validate()),
     )
     for field, check in checks:
         if not (key := (data.get(field) or "").strip()):
@@ -214,6 +230,7 @@ def _options_schema() -> vol.Schema:
             vol.Optional(CONF_FEDERAL_BILLS): _MULTILINE,
             vol.Optional(CONF_STATE_BILLS): _MULTILINE,
             vol.Optional(CONF_MARKETS): _MULTILINE,
+            vol.Optional(CONF_KALSHI): _MULTILINE,
             vol.Optional(CONF_ODDS_THRESHOLD, default=DEFAULT_ODDS_THRESHOLD): NumberSelector(
                 NumberSelectorConfig(
                     min=0,
@@ -231,6 +248,10 @@ def _options_schema() -> vol.Schema:
             vol.Optional(CONF_HEADLINE_COUNT, default=DEFAULT_HEADLINE_COUNT): NumberSelector(
                 NumberSelectorConfig(min=3, max=25, mode=NumberSelectorMode.BOX)
             ),
+            vol.Optional(CONF_FLOOR_VOTES, default=True): BooleanSelector(),
+            vol.Optional(CONF_CAMPAIGN_FINANCE, default=True): BooleanSelector(),
+            vol.Optional(CONF_EXECUTIVE, default=True): BooleanSelector(),
+            vol.Optional(CONF_CRYSTAL_BALL, default=False): BooleanSelector(),
         }
     )
 
@@ -244,6 +265,7 @@ def validate_options(options: Mapping[str, Any]) -> tuple[dict[str, str], list[s
         (CONF_FEDERAL_BILLS, lambda t: parse_federal_bill(t, congress)),
         (CONF_STATE_BILLS, parse_state_bill),
         (CONF_MARKETS, parse_market_ref),
+        (CONF_KALSHI, parse_kalshi_ref),
     ):
         wrong = [t for t in split_list(options.get(field)) if parser(t) is None]
         if wrong:

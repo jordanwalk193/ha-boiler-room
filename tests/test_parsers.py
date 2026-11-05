@@ -6,21 +6,36 @@ from datetime import date
 
 import pytest
 
+from custom_components.boiler_room.api import is_bot_challenge
 from custom_components.boiler_room.parsers import (
     assign_rep_slots,
     computed_federal_elections,
     current_congress,
+    current_session,
+    fec_cycle,
+    fec_display_name,
+    fec_party,
     federal_election_day,
+    is_rating_post,
     merge_elections,
     merge_headlines,
+    newest_rolls,
     parse_civic_elections,
     parse_event,
+    parse_fec_race,
     parse_federal_bill,
     parse_feed,
+    parse_house_vote,
+    parse_kalshi_event,
+    parse_kalshi_ref,
     parse_market,
     parse_market_ref,
+    parse_presidential_documents,
     parse_state_bill,
+    party_unity,
     split_list,
+    vote_bill_label,
+    with_party,
 )
 
 
@@ -354,3 +369,213 @@ def test_summarize_ratings_orders_scale():
     assert summary["toss_ups"] == 2
     assert list(summary["counts"]) == ["Solid D", "Toss Up", "Lean R"]
     assert [r["race"] for r in summary["toss_up_races"]] == ["NY-2", "NY-4"]
+
+
+# --------------------------------------------------------------------------
+# 0.3: Kalshi, floor votes, FEC, Federal Register, Crystal Ball
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("KXNEXTSPEAKER-31", "KXNEXTSPEAKER-31"),
+        ("kxpresparty-2028", "KXPRESPARTY-2028"),
+        (
+            "https://kalshi.com/markets/kxnextspeaker/next-speaker/kxnextspeaker-31",
+            "KXNEXTSPEAKER-31",
+        ),
+        ("https://kalshi.com/markets/kxsenate/ga/kxsenatega-26?ref=x", "KXSENATEGA-26"),
+        ("https://kalshi.com/markets/kxnextspeaker", None),
+        ("banana", None),
+        ("", None),
+    ],
+)
+def test_parse_kalshi_ref(text, expected):
+    assert parse_kalshi_ref(text) == expected
+
+
+def test_kalshi_binary_uses_midpoint_when_untraded():
+    item = parse_kalshi_event(
+        {
+            "event_ticker": "KXONE-26",
+            "title": "Will it happen?",
+            "markets": [
+                {
+                    "last_price_dollars": "0",
+                    "yes_bid_dollars": "0.20",
+                    "yes_ask_dollars": "0.30",
+                    "status": "active",
+                }
+            ],
+        }
+    )
+    assert item["kind"] == "market"
+    assert item["outcomes"] == {"Yes": 25.0, "No": 75.0}
+    assert item["leader"] == "No"
+    assert item["url"] == "https://kalshi.com/markets/kxone"
+
+
+def test_kalshi_event_skips_settled_markets():
+    item = parse_kalshi_event(
+        {
+            "event_ticker": "KXRACE-26",
+            "mutually_exclusive": True,
+            "markets": [
+                {"yes_sub_title": "A", "last_price_dollars": "0.55", "status": "active"},
+                {"yes_sub_title": "B", "last_price_dollars": "0.40", "status": "active"},
+                {"yes_sub_title": "C", "last_price_dollars": "0.01", "status": "finalized"},
+            ],
+        }
+    )
+    assert item["outcomes"] == {"A": 55.0, "B": 40.0}
+    assert item["closed"] is False
+
+
+@pytest.mark.parametrize(
+    ("day", "session"),
+    [(date(2025, 3, 1), 1), (date(2026, 11, 5), 2), (date(2027, 1, 2), 2), (date(2027, 1, 3), 1)],
+)
+def test_current_session(day, session):
+    assert current_session(day) == session
+
+
+def test_newest_rolls_sorts_unordered_list():
+    items = [
+        {"rollCallNumber": 74, "startDate": "2026-02-24T10:00:00-05:00"},
+        {"rollCallNumber": 306, "startDate": "2026-09-15T18:00:00-04:00"},
+        {"rollCallNumber": 305, "startDate": "2026-09-15T18:00:00-04:00"},
+        {"noRoll": True},
+    ]
+    assert [i["rollCallNumber"] for i in newest_rolls(items, 2)] == [306, 305]
+
+
+@pytest.mark.parametrize(
+    ("cast", "totals", "expected"),
+    [
+        ("Yea", {"yea": 200, "nay": 10}, True),
+        ("Nay", {"yea": 200, "nay": 10}, False),
+        ("Not Voting", {"yea": 200, "nay": 10}, None),
+        ("Yea", {"yea": 5, "nay": 5}, None),
+        ("Yea", None, None),
+    ],
+)
+def test_with_party(cast, totals, expected):
+    assert with_party(cast, totals) is expected
+
+
+def test_parse_house_vote_and_unity():
+    detail = {
+        "rollCallNumber": 12,
+        "result": "Failed",
+        "voteQuestion": "On Agreeing to the Amendment",
+        "legislationType": "HRES",
+        "legislationNumber": "9",
+        "votePartyTotal": [
+            {"voteParty": "D", "yeaTotal": 10, "nayTotal": 200},
+            {"voteParty": "R", "yeaTotal": 210, "nayTotal": 2},
+        ],
+    }
+    members = [
+        {"bioguideID": "x1", "voteCast": "Aye", "voteParty": "D"},
+        {"bioguideID": "X2", "voteCast": "No", "voteParty": "R"},
+        {"bioguideID": "X3", "voteCast": "Yea", "voteParty": "R"},
+    ]
+    vote = parse_house_vote(detail, members, ["X1", "x2"])
+    assert vote["bill"] == "H.Res. 9"
+    assert vote["totals"]["yea"] == 220
+    assert set(vote["members"]) == {"X1", "X2"}  # X3 isn't followed
+    assert vote["members"]["X1"] == {"vote": "Yea", "party": "D", "with_party": False}
+    assert vote["members"]["X2"]["with_party"] is False
+    assert party_unity([vote], "X1") == 0.0
+    assert party_unity([vote], "NOPE") is None
+
+
+def test_vote_bill_label():
+    assert vote_bill_label("HR", "3424") == "H.R. 3424"
+    assert vote_bill_label("HJRES", 1) == "H.J.Res. 1"
+    assert vote_bill_label("QUORUM", 1) == "QUORUM 1"
+    assert vote_bill_label(None, None) is None
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("MANNION, JOHN W", "John W Mannion"),
+        ("OSSOFF, T. JONATHAN", "T. Jonathan Ossoff"),
+        ("COLLINS, MICHAEL A JR", "Michael A Collins Jr"),
+        ("MCCOLUMN, JONATHAN MR", "Jonathan McColumn"),
+        ("O'ROURKE, BETO III", "Beto O'Rourke III"),
+        ("OCASIO-CORTEZ, ALEXANDRIA", "Alexandria Ocasio-Cortez"),
+        ("PLAIN NAME", "Plain Name"),
+        (None, None),
+    ],
+)
+def test_fec_display_name(raw, expected):
+    assert fec_display_name(raw) == expected
+
+
+def test_fec_party_and_cycle():
+    assert fec_party("DEMOCRATIC PARTY") == "Democratic"
+    assert fec_party("GREEN PARTY") == "Green"
+    assert fec_party(None) is None
+    assert fec_cycle(date(2026, 11, 5)) == 2026
+    assert fec_cycle(date(2027, 2, 1)) == 2028
+
+
+def test_parse_fec_race_keeps_incumbents_with_no_money():
+    race = parse_fec_race(
+        [
+            {"candidate_name": "A, B", "total_receipts": 10, "candidate_id": "H1"},
+            {
+                "candidate_name": "C, D",
+                "total_receipts": 0,
+                "incumbent_challenge_full": "Incumbent",
+            },
+            {"candidate_name": "E, F", "total_receipts": 0},
+            {"candidate_name": "G, H", "total_receipts": 50, "candidate_id": "H4"},
+        ]
+    )
+    assert [c["name"] for c in race] == ["H G", "B A", "D C"]
+    assert race[0]["url"] == "https://www.fec.gov/data/candidate/H4/"
+
+
+def test_parse_presidential_documents():
+    docs = parse_presidential_documents(
+        {
+            "results": [
+                {
+                    "title": "Doing <b>Things</b>",
+                    "subtype": "Executive Order",
+                    "executive_order_number": 14400,
+                    "document_number": "2026-1",
+                    "president": {"name": "P"},
+                },
+                {"title": "Memo", "document_number": "2026-2"},
+            ]
+        }
+    )
+    assert docs[0]["title"] == "Doing Things"
+    assert docs[0]["number"] == "14400"
+    assert docs[1]["kind"] == "Presidential Document"
+    assert parse_presidential_documents(None) == []
+
+
+def test_bot_challenge_detection():
+    assert is_bot_challenge("challenge", "")
+    assert is_bot_challenge(None, "<html><head><title>Just a moment...</title>")
+    assert not is_bot_challenge(None, "<?xml version='1.0'?><rss></rss>")
+
+
+@pytest.mark.parametrize(
+    ("title", "expected"),
+    [
+        ("Four Rating Changes Headlined by Alaska Senate", True),
+        ("The House: 28 Rating Changes", True),
+        ("2026 Final Ratings", True),
+        ("The Importance of Not Being Hated", False),
+        (None, False),
+    ],
+)
+def test_is_rating_post(title, expected):
+    assert is_rating_post(title) is expected

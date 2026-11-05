@@ -14,6 +14,7 @@ CONF_OPENSTATES_KEY: Final = "openstates_api_key"
 CONF_CIVIC_KEY: Final = "civic_api_key"
 CONF_COOK_EMAIL: Final = "cook_email"
 CONF_COOK_PASSWORD: Final = "cook_password"
+CONF_FEC_KEY: Final = "fec_api_key"
 
 # Options
 CONF_STATE: Final = "state"
@@ -26,11 +27,20 @@ CONF_NEWS_SOURCES: Final = "news_sources"
 CONF_CUSTOM_FEEDS: Final = "custom_feeds"
 CONF_HEADLINE_COUNT: Final = "headline_count"
 CONF_NEWS_KEYWORDS: Final = "news_keywords"
+CONF_KALSHI: Final = "kalshi_markets"
+CONF_FLOOR_VOTES: Final = "floor_votes"
+CONF_CAMPAIGN_FINANCE: Final = "campaign_finance"
+CONF_EXECUTIVE: Final = "executive_actions"
+CONF_CRYSTAL_BALL: Final = "crystal_ball"
 
 STATE_AUTO: Final = "auto"
 
 DEFAULT_HEADLINE_COUNT: Final = 10
 DEFAULT_ODDS_THRESHOLD: Final = 5.0
+# api.data.gov's shared demo key: ~30 requests/hour, 50/day per IP. Enough for a
+# couple of races twice a day; a free personal key lifts the limit.
+FEC_DEMO_KEY: Final = "DEMO_KEY"
+FLOOR_VOTES_KEPT: Final = 10
 
 # Update intervals. Open States' free tier is small, so it polls gently.
 INTERVAL_REPS: Final = timedelta(hours=24)
@@ -42,15 +52,32 @@ INTERVAL_ELECTIONS: Final = timedelta(hours=12)
 # Cook asks API users to pull at most once a day.
 INTERVAL_COOK: Final = timedelta(hours=24)
 COOK_CHAMBERS: Final = ("house", "senate", "governor")
+INTERVAL_FLOOR_VOTES: Final = timedelta(hours=1)
+# FEC totals only move when a report is filed; twice a day stays inside DEMO_KEY.
+INTERVAL_FEC: Final = timedelta(hours=12)
+INTERVAL_EXECUTIVE: Final = timedelta(hours=1)
+INTERVAL_CRYSTAL_BALL: Final = timedelta(hours=1)
+FEC_OFFICES: Final = ("house", "senate", "president")
 
 # Bus events for automations
 EVENT_BILL_ACTION: Final = "boiler_room_bill_action"
 EVENT_NEW_HEADLINE: Final = "boiler_room_new_headline"
 EVENT_ODDS_MOVED: Final = "boiler_room_odds_moved"
 EVENT_RATING_CHANGED: Final = "boiler_room_rating_changed"
+EVENT_REP_VOTE: Final = "boiler_room_rep_vote"
+EVENT_EXECUTIVE_ACTION: Final = "boiler_room_executive_action"
+EVENT_FEC_REPORT: Final = "boiler_room_fundraising_report"
+EVENT_CRYSTAL_BALL_POST: Final = "boiler_room_crystal_ball_post"
+
+# Sabato's Crystal Ball (UVA Center for Politics) publishes ratings as map images,
+# with no data feed. Its article RSS is official, but the site sits behind a
+# Cloudflare bot challenge that usually refuses non-browser clients. Boiler Room
+# reads the feed when it's let through and says so plainly when it isn't.
+CRYSTAL_BALL_FEED: Final = "https://centerforpolitics.org/crystalball/feed/"
+CRYSTAL_BALL_URL: Final = "https://centerforpolitics.org/crystalball/"
 
 USER_AGENT: Final = (
-    "HomeAssistant-BoilerRoom/0.2 (+https://github.com/jordanwalk193/ha-boiler-room)"
+    "HomeAssistant-BoilerRoom/0.3 (+https://github.com/jordanwalk193/ha-boiler-room)"
 )
 
 # Established outlets with working RSS feeds, chosen to span the spectrum.

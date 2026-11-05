@@ -17,16 +17,31 @@ from homeassistant.helpers.typing import ConfigType
 from homeassistant.loader import async_get_integration
 from homeassistant.util import dt as dt_util
 
-from .api import CivicClient, CongressClient, CookClient, OpenStatesClient, PolymarketClient
+from .api import (
+    CivicClient,
+    CongressClient,
+    CookClient,
+    FecClient,
+    FederalRegisterClient,
+    KalshiClient,
+    OpenStatesClient,
+    PolymarketClient,
+)
 from .const import (
+    CONF_CAMPAIGN_FINANCE,
     CONF_CIVIC_KEY,
     CONF_CONGRESS_KEY,
     CONF_COOK_EMAIL,
     CONF_COOK_PASSWORD,
+    CONF_CRYSTAL_BALL,
     CONF_CUSTOM_FEEDS,
     CONF_DISTRICT,
+    CONF_EXECUTIVE,
+    CONF_FEC_KEY,
     CONF_FEDERAL_BILLS,
+    CONF_FLOOR_VOTES,
     CONF_HEADLINE_COUNT,
+    CONF_KALSHI,
     CONF_MARKETS,
     CONF_NEWS_KEYWORDS,
     CONF_NEWS_SOURCES,
@@ -38,14 +53,19 @@ from .const import (
     DEFAULT_NEWS_SOURCES,
     DEFAULT_ODDS_THRESHOLD,
     DOMAIN,
+    FEC_DEMO_KEY,
     FRONTEND_URL,
     NEWS_SOURCES,
     STATE_AUTO,
 )
 from .coordinator import (
+    CampaignFinanceCoordinator,
     CookCoordinator,
+    CrystalBallCoordinator,
     ElectionsCoordinator,
+    ExecutiveCoordinator,
     FederalBillsCoordinator,
+    FloorVotesCoordinator,
     MarketsCoordinator,
     NewsCoordinator,
     RepsCoordinator,
@@ -54,6 +74,7 @@ from .coordinator import (
 from .parsers import (
     current_congress,
     parse_federal_bill,
+    parse_kalshi_ref,
     parse_market_ref,
     parse_state_bill,
     split_list,
@@ -85,6 +106,10 @@ class BoilerRoomData:
     news: NewsCoordinator | None
     elections: ElectionsCoordinator
     cook: CookCoordinator | None = None
+    floor_votes: FloorVotesCoordinator | None = None
+    finance: CampaignFinanceCoordinator | None = None
+    executive: ExecutiveCoordinator | None = None
+    crystal_ball: CrystalBallCoordinator | None = None
     home_district: int | None = None
     home_state: str | None = None
 
@@ -100,6 +125,10 @@ class BoilerRoomData:
                 self.news,
                 self.elections,
                 self.cook,
+                self.floor_votes,
+                self.finance,
+                self.executive,
+                self.crystal_ball,
             )
             if c is not None
         ]
@@ -162,6 +191,21 @@ async def async_setup_entry(hass: HomeAssistant, entry: BoilerRoomConfigEntry) -
         )
     )
 
+    kalshi = list(
+        dict.fromkeys(
+            k for k in (parse_kalshi_ref(t) for t in split_list(opts.get(CONF_KALSHI))) if k
+        )
+    )
+
+    def home_district() -> int | None:
+        if district is not None:
+            return district
+        house = (reps.data or {}).get("us_representative") if reps else None
+        return (house or {}).get("congressional_district")
+
+    def house_rep() -> dict | None:
+        return (reps.data or {}).get("us_representative") if reps else None
+
     feeds = [
         NEWS_SOURCES[key]
         for key in opts.get(CONF_NEWS_SOURCES, DEFAULT_NEWS_SOURCES)
@@ -188,8 +232,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: BoilerRoomConfigEntry) -
                 PolymarketClient(session),
                 slugs,
                 float(opts.get(CONF_ODDS_THRESHOLD, DEFAULT_ODDS_THRESHOLD)),
+                KalshiClient(session) if kalshi else None,
+                kalshi,
             )
-            if slugs
+            if slugs or kalshi
             else None
         ),
         news=(
@@ -215,13 +261,47 @@ async def async_setup_entry(hass: HomeAssistant, entry: BoilerRoomConfigEntry) -
             else None
         ),
         home_district=district,
+        floor_votes=(
+            FloorVotesCoordinator(hass, entry, congress, house_rep)
+            if congress and opts.get(CONF_FLOOR_VOTES, True)
+            else None
+        ),
+        executive=(
+            ExecutiveCoordinator(hass, entry, FederalRegisterClient(session))
+            if opts.get(CONF_EXECUTIVE, True)
+            else None
+        ),
+        crystal_ball=(
+            CrystalBallCoordinator(hass, entry, session)
+            if opts.get(CONF_CRYSTAL_BALL, False)
+            else None
+        ),
     )
 
-    # Reps first: state bills and elections use the state it discovers.
+    # Reps first: state bills, elections, votes and money use what it discovers.
     if data.reps:
         await data.reps.async_config_entry_first_refresh()
+    if opts.get(CONF_CAMPAIGN_FINANCE, True):
+        fec_key = entry.data.get(CONF_FEC_KEY)
+        finance = CampaignFinanceCoordinator(
+            hass,
+            entry,
+            FecClient(session, fec_key or FEC_DEMO_KEY),
+            home_state,
+            home_district,
+            personal_key=bool(fec_key),
+        )
+        # Nothing to look up without a home state (and no presidential cycle).
+        data.finance = finance if finance.races() else None
+    # The extras added in 0.3 start soft: if one of them is down, its entities show
+    # unavailable and retry on schedule instead of holding up the whole integration.
+    soft = {id(c) for c in (data.floor_votes, data.finance, data.executive, data.crystal_ball) if c}
     for coordinator in data.coordinators:
-        if coordinator is not data.reps:
+        if coordinator is data.reps:
+            continue
+        if id(coordinator) in soft:
+            await coordinator.async_refresh()
+        else:
             await coordinator.async_config_entry_first_refresh()
 
     if data.home_district is None and data.reps and data.reps.data:

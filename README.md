@@ -1,6 +1,6 @@
 # Boiler Room
 
-US politics for Home Assistant. Who represents your house, what's happening to the bills you care about, what the prediction markets think, the day's headlines, and when the next election is — as ordinary sensors, a calendar and automation events.
+US politics for Home Assistant. Who represents your house and how they vote, who's raising the money in your races, what the White House just signed, where the bills you care about stand, what the forecasters and prediction markets think, the day's headlines, and when the next election is — as ordinary sensors, a calendar and automation events.
 
 Boiler Room doesn't editorialize. It reads public data sources and shows you what they say.
 
@@ -11,7 +11,11 @@ Boiler Room doesn't editorialize. It reads public data sources and shows you wha
 | **Representatives** | Your two U.S. senators, U.S. representative, state senator and state representative/assembly member — name as the state, photo as the entity picture, party, district, email and links in attributes. With a Congress.gov key, each member of Congress also shows their newest sponsored bill. | Open States key (finds everyone from your home location). Congress.gov key alone works too if you pick your state and district. |
 | **Legislation** | One sensor per followed bill. State = latest action; title, sponsor, dates and link in attributes. | Congress.gov key (federal), Open States key (state) |
 | **Race Ratings** | Cook Political Report ratings for your House district, Senate race and governor's race (`Lean R`, `Toss Up`, …, with Cook PVI and incumbent), plus House/Senate/governor toss-up counts with the full rating breakdown and the list of toss-up races. | Your own Cook subscription with API access |
-| **Prediction Markets** | One sensor per Polymarket market or event. Yes/No markets report the implied probability in %; multi-candidate events report the leader with every outcome's odds in attributes. | Nothing |
+| | Optional, experimental: `Crystal Ball latest`, the newest Sabato's Crystal Ball (UVA Center for Politics) articles, with rating-change posts flagged. [See the caveat.](#sabatos-crystal-ball) | Nothing |
+| **Floor Votes** | `Latest House vote` (result + bill, party breakdown, the last 10 roll calls in attributes), `Your representative's last vote` (Yea/Nay, and whether they voted with their party), and `Your representative's party-line votes` (% of recent contested votes cast with their party's majority, plus the ones where they broke ranks). | Congress.gov key |
+| **Campaign Finance** | `Top fundraiser` for your House race, your Senate race, and the presidential race in presidential cycles. Every candidate's money raised, spent and cash on hand is in attributes, from FEC filings. | Nothing (a free api.data.gov key lifts the shared demo key's limits). Needs your home state, and your district for the House race. |
+| **Executive Actions** | `Latest executive action` (executive orders, proclamations, memoranda, with number, signing date and link) and `Executive orders this year`. | Nothing |
+| **Prediction Markets** | One sensor per Polymarket or Kalshi market or event. Yes/No markets report the implied probability in %; multi-candidate events report the leader with every outcome's odds in attributes. | Nothing |
 | **News** | `Latest headline`, with the most recent headlines across your chosen outlets in attributes. | Nothing |
 | **Elections** | `Election day` (on today if there's an election), `Next election` (date + days until), and an `Elections` calendar. Federal general elections are always included; a Google Civic key adds official listings for your state. | Nothing (Google Civic key optional) |
 
@@ -20,9 +24,13 @@ Boiler Room doesn't editorialize. It reads public data sources and shows you wha
 | Event | Fired when | Data |
 |---|---|---|
 | `boiler_room_bill_action` | A followed bill gets a new latest action | `level`, `bill`, `title`, `action`, `date`, `url` |
-| `boiler_room_odds_moved` | An outcome moves at least the threshold (default 5 points) between checks | `market`, `outcome`, `from`, `to`, `change`, `url` |
+| `boiler_room_odds_moved` | An outcome moves at least the threshold (default 5 points) between checks | `market`, `outcome`, `from`, `to`, `change`, `url`, `source` |
 | `boiler_room_rating_changed` | Cook moves a race's rating | `chamber`, `race`, `state`, `district`, `from`, `to` |
 | `boiler_room_new_headline` | A new headline shows up | `title`, `link`, `source`, `published` |
+| `boiler_room_rep_vote` | Your U.S. representative votes on a new House roll call | `representative`, `vote`, `with_party`, `roll`, `question`, `bill`, `result`, `date`, `url` |
+| `boiler_room_fundraising_report` | A candidate in one of your races files a new FEC report | `office`, `candidate`, `party`, `raised`, `raised_since_last`, `cash_on_hand`, `through`, `url` |
+| `boiler_room_executive_action` | A new presidential document is published | `title`, `kind`, `number`, `signed`, `published`, `president`, `url`, `pdf_url` |
+| `boiler_room_crystal_ball_post` | A new Crystal Ball article appears (only when the feed is readable) | `title`, `link`, `published`, `rating_change` |
 
 ## Install
 
@@ -38,6 +46,7 @@ Boiler Room doesn't editorialize. It reads public data sources and shows you wha
 | Congress.gov | Federal bills, members' sponsored bills | [api.congress.gov/sign-up](https://api.congress.gov/sign-up/) — arrives by email in a minute |
 | Open States | Auto-detects every legislator for your home location; state bills | [open.pluralpolicy.com](https://open.pluralpolicy.com/accounts/profile/) |
 | Google Civic Information | Official election listings for your state | Enable the Civic Information API in [Google Cloud Console](https://console.cloud.google.com/apis/library/civicinfo.googleapis.com) and create an API key |
+| FEC (api.data.gov) | Optional. Without it Boiler Room uses the shared `DEMO_KEY`, which covers a home's races twice a day. | [api.data.gov/signup](https://api.data.gov/signup/) |
 
 ### Cook Political Report
 
@@ -54,6 +63,11 @@ Keys can be changed later from the integration's **Reconfigure** menu.
 | Federal bills | `HR 1234`, `S.55`, `118/hr/815`, or a congress.gov bill link. Bare numbers mean the current Congress. |
 | State bills | `S1234`, `A 5678` (your state), or `ca:AB12` for another state |
 | Polymarket | Paste the polymarket.com link for a market or event, or just its slug |
+| Kalshi | Paste the kalshi.com market link, or the event ticker (`KXNEXTSPEAKER-31`) |
+| House floor votes | On by default when there's a Congress.gov key |
+| Campaign finance | On by default |
+| Executive actions | On by default |
+| Sabato's Crystal Ball articles | Off by default; experimental, see below |
 | News outlets | NPR, PBS News Hour, The Hill, Fox News (on by default), plus BBC US and Politico |
 | Extra feeds | Any RSS/Atom URL — a local paper, a Substack, or a subreddit like `https://www.reddit.com/r/NeutralPolitics/.rss` |
 | Headline keywords | `Syracuse, Hochul, budget` — keep only headlines that mention one of these |
@@ -69,15 +83,15 @@ strategy:
   type: custom:boiler-room
 ```
 
-and save. You get an **Overview** tab plus **Race ratings**, **Bills**, **Odds**, **News** and **Elections** tabs; tabs for sources you haven't set up are left out. On election day the countdown turns into a polls-open banner.
+and save. You get an **Overview** tab plus **Race ratings**, **Votes**, **Money**, **White House**, **Bills**, **Odds**, **News** and **Elections** tabs; tabs for sources you haven't set up are left out. On election day the countdown turns into a polls-open banner.
 
 Each panel is also a card you can drop on any dashboard:
 
 ```yaml
 type: custom:boiler-room-card
-panel: ratings      # election, reps, home_races, ratings, bills, odds, headlines
+panel: ratings      # election, reps, home_races, ratings, votes, money, executive, crystal_ball, bills, odds, headlines
 chamber: house      # ratings only: house, senate or governor
-limit: 10           # ratings: toss-up races listed (0 hides the list); headlines: how many
+limit: 10           # ratings: toss-up races listed (0 hides the list); headlines/votes/executive/crystal_ball: how many
 outcomes: 4         # odds: outcomes shown per multi-candidate market
 title: Optional heading
 ```
@@ -135,6 +149,40 @@ content: >
   {% endfor %}
 ```
 
+**Tell me when my representative breaks with their party**
+
+```yaml
+automation:
+  - alias: Rep broke ranks
+    trigger:
+      - platform: event
+        event_type: boiler_room_rep_vote
+        event_data:
+          with_party: false
+    action:
+      - service: notify.mobile_app_phone
+        data:
+          title: "{{ trigger.event.data.representative }} broke ranks"
+          message: "Voted {{ trigger.event.data.vote }} on {{ trigger.event.data.bill or trigger.event.data.question }} ({{ trigger.event.data.result }})"
+```
+
+**New executive order announcement**
+
+```yaml
+automation:
+  - alias: New executive order
+    trigger:
+      - platform: event
+        event_type: boiler_room_executive_action
+        event_data:
+          kind: Executive Order
+    action:
+      - service: notify.mobile_app_phone
+        data:
+          title: "Executive Order {{ trigger.event.data.number }}"
+          message: "{{ trigger.event.data.title }}"
+```
+
 **Odds for a multi-candidate event**
 
 ```yaml
@@ -151,13 +199,17 @@ content: >
 
 | Source | Interval |
 |---|---|
-| Polymarket | 5 minutes |
+| Polymarket, Kalshi | 5 minutes |
 | News | 10 minutes |
 | Federal bills | 30 minutes |
 | State bills | 1 hour (Open States' free tier is small; requests are spaced 1 s apart) |
 | Representatives | Daily |
 | Elections | Every 12 hours |
 | Cook ratings | Daily |
+| House floor votes | Hourly (each roll call is fetched once, then kept) |
+| Campaign finance | Every 12 hours |
+| Executive actions | Hourly |
+| Crystal Ball feed | Hourly |
 
 ## FAQ
 
@@ -165,7 +217,10 @@ content: >
 No. Real-time results come from paid feeds such as the AP's, and there isn't a free, reliable one to build on. For results, check your state or county board of elections.
 
 **Can it read other forecasters (Crystal Ball, Inside Elections, Split Ticket)?**
-Not yet. None of them publish a ratings feed or API to build on, and Boiler Room doesn't scrape. If one does, it'll go in.
+Only partly. None of them publish a ratings feed or API to build on, and Boiler Room doesn't scrape. Sabato's Crystal Ball has an official article feed, so it's offered as an experiment (below). If a forecaster publishes ratings data, it'll go in.
+
+**Why no Senate votes?**
+Congress.gov's vote API covers the House. The Senate publishes its roll calls on senate.gov, which blocks automated readers.
 
 **Why these news outlets?**
 They're established newsrooms with working feeds, picked so the default set isn't all from one side. Turn any of them off, or add your own feeds.
@@ -176,6 +231,12 @@ They're prices traders are paying, read as implied probabilities. They move with
 **Where does polling-place info live?**
 Not here. Your county board of elections is the authoritative source.
 
+## Sabato's Crystal Ball
+
+The UVA Center for Politics publishes the Crystal Ball's ratings as map images, with no ratings data behind them, so Boiler Room can't show Crystal Ball ratings next to Cook's. It can read the Crystal Ball's official article feed, which includes every rating-change post. Turn on **Sabato's Crystal Ball articles** in Configure to try it.
+
+The catch: the site sits behind a bot check that usually refuses non-browser clients like Home Assistant. Boiler Room never tries to get past it. If the check blocks your network, you'll get a Repairs notice saying so, the sensor reads `Blocked by the site`, and its attributes (and the dashboard card) still link straight to the Crystal Ball's House, Senate, governor and 2028 presidential ratings pages. The notice clears itself if the site starts letting Boiler Room through.
+
 ## Development
 
 ```bash
@@ -183,6 +244,6 @@ pip install pytest-homeassistant-custom-component
 pytest -q
 ```
 
-Data: [Congress.gov API](https://api.congress.gov/) (Library of Congress), [Open States](https://open.pluralpolicy.com/) (Plural), [Polymarket Gamma API](https://docs.polymarket.com/), [Google Civic Information API](https://developers.google.com/civic-information), [Cook Political Report API](https://www.cookpolitical.com/api), and each outlet's public feed. Not affiliated with any of them.
+Data: [Congress.gov API](https://api.congress.gov/) (Library of Congress), [Open States](https://open.pluralpolicy.com/) (Plural), [OpenFEC](https://api.open.fec.gov/developers/) (Federal Election Commission), [Federal Register API](https://www.federalregister.gov/developers/documentation/api/v1), [Polymarket Gamma API](https://docs.polymarket.com/), [Kalshi public market data](https://docs.kalshi.com/), [Google Civic Information API](https://developers.google.com/civic-information), [Cook Political Report API](https://www.cookpolitical.com/api), [Sabato's Crystal Ball](https://centerforpolitics.org/crystalball/) feed, and each outlet's public feed. Not affiliated with any of them.
 
 MIT licensed.

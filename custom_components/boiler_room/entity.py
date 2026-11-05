@@ -20,6 +20,9 @@ GROUPS = {
     "ratings": "Race Ratings",
     "news": "News",
     "elections": "Elections",
+    "votes": "Floor Votes",
+    "finance": "Campaign Finance",
+    "executive": "Executive Actions",
 }
 
 

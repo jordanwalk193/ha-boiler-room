@@ -1,7 +1,7 @@
 /* Boiler Room dashboard card and dashboard strategy.
  *
  * One card type, `custom:boiler-room-card`, draws any of the panels below
- * (`panel: election`, `panel: reps`, `panel: ratings`, ...). The strategy
+ * (`panel: election`, `panel: reps`, `panel: ratings`, `panel: votes`, `panel: money`, ...). The strategy
  * `custom:boiler-room` lays them out as a ready-made dashboard and leaves out
  * tabs for sources that aren't set up.
  *
@@ -9,7 +9,7 @@
  * translation key rather than entity id, so renamed entities keep working.
  */
 const DOMAIN = 'boiler_room';
-const VERSION = '0.2.0';
+const VERSION = '0.3.0';
 
 // Cook's seven-step scale, Solid D to Solid R. Toss Up sits in brass.
 const SCALE = ['Solid D', 'Likely D', 'Lean D', 'Toss Up', 'Lean R', 'Likely R', 'Solid R'];
@@ -27,6 +27,16 @@ const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&': '&amp;', '<': '
 const safeUrl = u => /^https?:\/\//i.test(String(u || '')) ? esc(u) : '';
 const ok = st => st && st.state !== 'unavailable' && st.state !== 'unknown';
 const pct = v => (v == null || isNaN(v)) ? '?' : (Math.round(Number(v) * 10) / 10) + '%';
+const money = v => {
+  const n = Number(v) || 0;
+  if (n >= 1e9) return '$' + (n / 1e9).toFixed(1) + 'B';
+  if (n >= 1e6) return '$' + (n / 1e6).toFixed(n >= 1e7 ? 0 : 1) + 'M';
+  if (n >= 1e3) return '$' + Math.round(n / 1e3) + 'K';
+  return '$' + Math.round(n);
+};
+// Party colors reuse the ratings scale so the whole dashboard reads as one system.
+const partyColor = p => /^dem/i.test(p || '') || p === 'D' ? SCALE_COLOR['Solid D']
+  : /^rep/i.test(p || '') || p === 'R' ? SCALE_COLOR['Solid R'] : 'var(--secondary-text-color)';
 
 const parseDay = iso => {
   const [y, m, d] = String(iso).split('-').map(Number);
@@ -130,6 +140,29 @@ const STYLE = `
   .bar .fill.lead { background: var(--br-brass); }
   .bar .num { text-align: right; font-variant-numeric: tabular-nums; color: var(--primary-text-color); }
   .note { font-size: 12px; color: var(--secondary-text-color); margin-top: 6px; }
+
+  /* votes */
+  .vote { padding: 10px 0; border-top: 1px solid var(--divider-color); cursor: pointer; }
+  .vote:first-of-type { border-top: 0; padding-top: 0; }
+  .vote .top { display: flex; gap: 8px; align-items: baseline; justify-content: space-between; }
+  .yn { display: flex; height: 6px; border-radius: 3px; overflow: hidden; margin-top: 6px; background: var(--secondary-background-color, rgba(127,127,127,.15)); }
+  .yn .y { background: var(--br-brass); }
+  .yn .n { background: var(--secondary-text-color); opacity: .45; }
+  .mine { font-size: 12px; font-weight: 600; white-space: nowrap; color: var(--primary-text-color); }
+  .mine.broke { color: var(--error-color, #c9564b); }
+  .unity { display: flex; align-items: baseline; gap: 10px; margin-bottom: 10px; }
+  .unity b { font-size: 26px; font-weight: 700; color: var(--primary-text-color); font-variant-numeric: tabular-nums; }
+
+  /* money */
+  .race { margin-top: 14px; }
+  .race:first-of-type { margin-top: 0; }
+  .cand { display: grid; grid-template-columns: minmax(110px, 42%) 1fr 58px; gap: 8px; align-items: center; font-size: 13px; margin-top: 7px; }
+  .cand .who { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--primary-text-color); }
+  .cand .who i { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; vertical-align: 0; }
+  .cand .track { height: 10px; border-radius: 5px; background: var(--secondary-background-color, rgba(127,127,127,.15)); overflow: hidden; position: relative; }
+  .cand .raised { height: 100%; border-radius: 5px; opacity: .85; }
+  .cand .cash { position: absolute; top: 3px; left: 0; height: 4px; border-radius: 2px; background: rgba(255,255,255,.75); }
+  .cand .num { text-align: right; font-variant-numeric: tabular-nums; color: var(--primary-text-color); }
 
   /* headlines */
   .news { padding: 9px 0; border-top: 1px solid var(--divider-color); }
@@ -239,7 +272,7 @@ const PANELS = {
   odds(hass, idx, config) {
     const ids = idx.byGroup['Prediction Markets'] || [];
     const rows = ids.map(id => hass.states[id]).filter(ok);
-    if (!rows.length) return `<div class="empty">Paste a Polymarket link into the integration's Configure screen to track its odds.</div>`;
+    if (!rows.length) return `<div class="empty">Paste a Polymarket or Kalshi link into the integration's Configure screen to track its odds.</div>`;
     const show = config.outcomes || 4;
     return rows.map(st => {
       const a = st.attributes;
@@ -253,7 +286,7 @@ const PANELS = {
         ${entries.map(([name, v]) => `<div class="bar"><span class="label">${esc(name)}</span>
           <span class="track"><span class="fill ${v === top ? 'lead' : ''}" style="display:block;width:${Math.max(0, Math.min(100, v))}%"></span></span>
           <span class="num">${pct(v)}</span></div>`).join('')}
-        <div class="note">${a.closed ? 'Market closed. ' : ''}${a.end_date ? 'Resolves ' + shortDate(a.end_date) + '. ' : ''}${safeUrl(a.url) ? `<a href="${safeUrl(a.url)}" target="_blank" rel="noopener">Polymarket</a>` : ''}</div>
+        <div class="note">${a.closed ? 'Market closed. ' : ''}${a.end_date ? 'Resolves ' + shortDate(a.end_date) + '. ' : ''}${safeUrl(a.url) ? `<a href="${safeUrl(a.url)}" target="_blank" rel="noopener">${esc(a.source || 'Polymarket')}</a>` : ''}</div>
       </div>`;
     }).join('');
   },
@@ -267,6 +300,76 @@ const PANELS = {
     return list.map(h => `<div class="news">${safeUrl(h.link) ? `<a href="${safeUrl(h.link)}" target="_blank" rel="noopener">${esc(h.title)}</a>` : esc(h.title)}
         <div class="sub">${esc(h.source)}${h.published ? ', ' + esc(ago(h.published)) : ''}</div></div>`).join('')
       + (failed.length ? `<div class="note">Didn't load: ${esc(failed.join(', '))}</div>` : '');
+  },
+
+  votes(hass, idx, config) {
+    const st = hass.states[idx.byKey.latest_house_vote];
+    if (!ok(st)) return `<div class="empty">Add a Congress.gov key to follow House floor votes.</div>`;
+    const a = st.attributes;
+    const unity = hass.states[idx.byKey.rep_party_unity];
+    const rep = a.representative;
+    let head = '';
+    if (ok(unity) && rep) {
+      const counted = unity.attributes.votes_counted || 0;
+      const broke = (unity.attributes.broke_with_party || []).length;
+      head = `<div class="unity" data-entity="${esc(unity.entity_id)}" role="button" tabindex="0"><b>${esc(Math.round(Number(unity.state)))}%</b>
+        <span class="sub">${esc(rep)} voted with their party on ${counted - broke} of the last ${counted} contested votes${broke ? `, broke ranks ${broke}×` : ''}.</span></div>`;
+    }
+    const rows = (a.recent || []).slice(0, config.limit || 10).map(v => {
+      const total = (v.yea || 0) + (v.nay || 0);
+      const y = total ? v.yea / total * 100 : 0;
+      const mine = v.rep_vote ? `<span class="mine ${v.with_party === false ? 'broke' : ''}" title="${v.with_party === false ? 'Voted against most of their party' : ''}">${esc(rep ? rep.split(' ').slice(-1)[0] : 'Rep')}: ${esc(v.rep_vote)}${v.with_party === false ? ', against party' : ''}</span>` : '';
+      return `<div class="vote" data-entity="${esc(st.entity_id)}" role="button" tabindex="0">
+        <div class="top"><div class="name">${esc(v.bill || v.question || 'Roll call ' + v.roll)}</div>${mine}</div>
+        <div class="sub">${esc(v.result || '')}${v.bill && v.question ? ', ' + esc(v.question) : ''} · ${esc(shortDate(v.date))} · roll ${esc(v.roll)}</div>
+        <div class="yn" title="${esc(v.yea)} yea, ${esc(v.nay)} nay"><div class="y" style="width:${y}%"></div><div class="n" style="width:${100 - y}%"></div></div>
+        <div class="tally" style="margin-top:3px"><span>${esc(v.yea)} yea</span><span>${esc(v.nay)} nay</span></div></div>`;
+    }).join('');
+    return head + rows + `<div class="note">${esc(a.session || '')}. House roll calls from Congress.gov; the Senate's vote site blocks automated readers.</div>`;
+  },
+
+  money(hass, idx) {
+    const races = ['fec_house', 'fec_senate', 'fec_president'].map(k => hass.states[idx.byKey[k]]).filter(ok);
+    if (!races.length) return `<div class="empty">Campaign finance needs your home state (from an Open States key, or picked in Configure).</div>`;
+    return races.map(st => {
+      const a = st.attributes;
+      const cands = (a.candidates || []).slice(0, 6);
+      if (!cands.length) return `<div class="race"><h3>${esc(a.race)}</h3><div class="sub">No candidates have filed with the FEC for this race in ${esc(a.cycle)}.</div></div>`;
+      const top = Math.max(1, ...cands.map(c => c.raised || 0));
+      const through = cands.map(c => c.through).filter(Boolean).sort().pop();
+      return `<div class="race" data-entity="${esc(st.entity_id)}" role="button" tabindex="0"><h3>${esc(a.race)} · ${esc(money(a.total_raised))} raised</h3>
+        ${cands.map(c => `<div class="cand" title="Raised ${money(c.raised)}, spent ${money(c.spent)}, ${money(c.cash_on_hand)} on hand">
+          <span class="who"><i style="background:${partyColor(c.party)}"></i>${esc(c.name)}${c.status === 'Incumbent' ? ' <small class="sub">(inc.)</small>' : ''}</span>
+          <span class="track"><span class="raised" style="display:block;width:${(c.raised || 0) / top * 100}%;background:${partyColor(c.party)}"></span>
+            <span class="cash" style="width:${Math.min(100, (c.cash_on_hand || 0) / top * 100)}%"></span></span>
+          <span class="num">${money(c.raised)}</span></div>`).join('')}
+        <div class="note">Bar = raised, white line = cash on hand. FEC reports through ${esc(shortDate(through))}.</div></div>`;
+    }).join('');
+  },
+
+  executive(hass, idx, config) {
+    const st = hass.states[idx.byKey.latest_executive_action];
+    if (!ok(st)) return `<div class="empty">Turn on executive actions in the integration's Configure screen.</div>`;
+    const count = hass.states[idx.byKey.executive_orders_this_year];
+    const head = ok(count) ? `<div class="unity" data-entity="${esc(count.entity_id)}" role="button" tabindex="0"><b>${esc(count.state)}</b><span class="sub">executive orders published in ${esc(count.attributes.year)}</span></div>` : '';
+    return head + (st.attributes.recent || []).slice(0, config.limit || 8).map(d => `<div class="news">
+        ${safeUrl(d.url) ? `<a href="${safeUrl(d.url)}" target="_blank" rel="noopener">${esc(d.title)}</a>` : esc(d.title)}
+        <div class="sub"><span class="chip quiet">${esc(d.kind)}${d.number ? ' ' + esc(d.number) : ''}</span> signed ${esc(shortDate(d.signed))}, published ${esc(shortDate(d.published))}</div></div>`).join('')
+      + `<div class="note">From the Federal Register.</div>`;
+  },
+
+  crystal_ball(hass, idx, config) {
+    const st = hass.states[idx.byKey.crystal_ball_latest];
+    if (!st) return `<div class="empty">Turn on Sabato's Crystal Ball in the integration's Configure screen.</div>`;
+    const a = st.attributes;
+    const pages = a.ratings_pages || {};
+    const links = [['senate', 'Senate'], ['house', 'House'], ['governor', 'Governors'], ['president', '2028 President'], ['rating_changes', 'Rating changes']]
+      .filter(([k]) => safeUrl(pages[k])).map(([k, label]) => `<a href="${safeUrl(pages[k])}" target="_blank" rel="noopener">${esc(label)}</a>`).join(' · ');
+    const posts = (a.posts || []).slice(0, config.limit || 6);
+    const body = posts.length ? posts.map(p => `<div class="news">${safeUrl(p.link) ? `<a href="${safeUrl(p.link)}" target="_blank" rel="noopener">${esc(p.title)}</a>` : esc(p.title)}
+        <div class="sub">${p.rating_change ? '<span class="chip" style="background:var(--br-brass)">Rating change</span> ' : ''}${esc(ago(p.published))}</div></div>`).join('')
+      : `<div class="empty">${a.blocked ? "The Center for Politics site is blocking automated readers from this network, so Crystal Ball articles can't load here. Boiler Room won't try to get around that. Its ratings maps are a click away:" : 'No Crystal Ball posts yet.'}</div>`;
+    return body + `<div class="note">Crystal Ball ratings: ${links}${a.blocked && posts.length ? '. Showing the last posts read before the site started blocking.' : ''}</div>`;
   },
 };
 
@@ -319,7 +422,7 @@ class BoilerRoomCard extends HTMLElement {
     this.dispatchEvent(new CustomEvent('hass-more-info', {detail: {entityId: el.dataset.entity}, bubbles: true, composed: true}));
   }
 
-  getCardSize() { return {election: 3, reps: 5, ratings: 4, home_races: 3, bills: 6, odds: 6, headlines: 8}[this._config?.panel] || 4; }
+  getCardSize() { return {election: 3, reps: 5, ratings: 4, home_races: 3, bills: 6, odds: 6, headlines: 8, votes: 8, money: 6, executive: 6, crystal_ball: 5}[this._config?.panel] || 4; }
   getGridOptions() { return {columns: 'full', min_columns: 6}; }
   static getStubConfig() { return {panel: 'election'}; }
 }
@@ -335,6 +438,10 @@ class BoilerRoomStrategy {
     const has = key => !!idx.byKey[key];
     const group = name => (idx.byGroup[name] || []).length > 0;
     const cook = has('cook_house_toss_ups');
+    const crystal = has('crystal_ball_latest');
+    const votes = has('latest_house_vote');
+    const finance = ['fec_house', 'fec_senate', 'fec_president'].some(has);
+    const executive = has('latest_executive_action');
     const numericMarkets = (idx.byGroup['Prediction Markets'] || [])
       .filter(id => hass.states[id]?.attributes?.unit_of_measurement === '%');
 
@@ -347,15 +454,40 @@ class BoilerRoomStrategy {
         group('News') ? section(heading('Headlines', 'mdi:newspaper-variant-outline'), card('headlines', {limit: 6})) : null,
         cook ? {...section(heading('House ratings', 'mdi:scale-balance'), card('ratings', {chamber: 'house', limit: 0})), column_span: 2} : null,
         group('Prediction Markets') ? section(heading('Odds', 'mdi:chart-line-variant'), card('odds', {outcomes: 3})) : null,
+        votes ? section(heading('On the House floor', 'mdi:gavel'), card('votes', {limit: 3})) : null,
+        finance ? section(heading('Money in your races', 'mdi:cash-multiple'), card('money')) : null,
+        executive ? section(heading('From the White House', 'mdi:draw-pen'), card('executive', {limit: 3})) : null,
       ].filter(Boolean),
     });
-    if (cook) {
+    if (cook || crystal) {
       views.push({
         title: 'Race ratings', path: 'ratings', icon: 'mdi:scale-balance', max_columns: 3, sections: [
-          {...section(heading('House', 'mdi:home-group'), card('ratings', {chamber: 'house'})), column_span: 3},
-          section(heading('Senate', 'mdi:pillar'), card('ratings', {chamber: 'senate'})),
-          section(heading('Governors', 'mdi:flag-variant'), card('ratings', {chamber: 'governor'})),
-          section(heading('Your races', 'mdi:flag-checkered'), card('home_races')),
+          cook ? {...section(heading('House', 'mdi:home-group'), card('ratings', {chamber: 'house'})), column_span: 3} : null,
+          cook ? section(heading('Senate', 'mdi:pillar'), card('ratings', {chamber: 'senate'})) : null,
+          cook ? section(heading('Governors', 'mdi:flag-variant'), card('ratings', {chamber: 'governor'})) : null,
+          cook ? section(heading('Your races', 'mdi:flag-checkered'), card('home_races')) : null,
+          crystal ? section(heading("Sabato's Crystal Ball", 'mdi:crystal-ball'), card('crystal_ball')) : null,
+        ].filter(Boolean),
+      });
+    }
+    if (votes) {
+      views.push({
+        title: 'Votes', path: 'votes', icon: 'mdi:gavel', max_columns: 2, sections: [
+          {...section(heading('House floor votes', 'mdi:gavel'), card('votes', {limit: 10})), column_span: 2},
+        ],
+      });
+    }
+    if (finance) {
+      views.push({
+        title: 'Money', path: 'money', icon: 'mdi:cash-multiple', max_columns: 2, sections: [
+          {...section(heading('Campaign finance', 'mdi:cash-multiple'), card('money')), column_span: 2},
+        ],
+      });
+    }
+    if (executive) {
+      views.push({
+        title: 'White House', path: 'white-house', icon: 'mdi:draw-pen', max_columns: 2, sections: [
+          {...section(heading('Executive actions', 'mdi:draw-pen'), card('executive', {limit: 15})), column_span: 2},
         ],
       });
     }
@@ -405,7 +537,7 @@ if (!window.customCards.some(c => c.type === 'boiler-room-card')) {
   window.customCards.push({
     type: 'boiler-room-card',
     name: 'Boiler Room',
-    description: 'Elections, representatives, race ratings, bills, odds and headlines from Boiler Room.',
+    description: 'Elections, representatives, race ratings, floor votes, campaign money, executive actions, bills, odds and headlines from Boiler Room.',
     preview: false,
     documentationURL: 'https://github.com/jordanwalk193/ha-boiler-room',
   });
