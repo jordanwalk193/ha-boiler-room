@@ -1,0 +1,19 @@
+{
+  "domain": "boiler_room",
+  "name": "Boiler Room",
+  "codeowners": [
+    "@jordanwalk193"
+  ],
+  "config_flow": true,
+  "dependencies": [
+    "frontend",
+    "http"
+  ],
+  "documentation": "https://github.com/jordanwalk193/ha-boiler-room",
+  "integration_type": "service",
+  "iot_class": "cloud_polling",
+  "issue_tracker": "https://github.com/jordanwalk193/ha-boiler-room/issues",
+  "requirements": [],
+  "single_config_entry": true,
+  "version": "0.2.0"
+}

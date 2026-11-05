@@ -1,0 +1,139 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Boiler Room",
+        "description": "Every key is optional and free. Each one unlocks more entities — you can add or change them later from Reconfigure.\n\n- **Congress.gov** — your members of Congress, their newest bills, and federal bills you follow. [Get a key]({congress_url})\n- **Open States** — finds your state and federal legislators from your home location, and tracks state bills. [Get a key]({openstates_url})\n- **Google Civic** — official election listings for your state. [Enable the API]({civic_url})\n- **Cook Political Report** — Cook's race ratings, toss-up counts and your home races. Uses your own Cook login; your plan needs API access. [About the API]({cook_url})\n\nPrediction markets, news and federal Election Day work with no keys at all.",
+        "data": {
+          "congress_api_key": "Congress.gov API key",
+          "openstates_api_key": "Open States API key",
+          "civic_api_key": "Google Civic Information API key",
+          "cook_email": "Cook Political Report email",
+          "cook_password": "Cook Political Report password"
+        }
+      },
+      "reconfigure": {
+        "title": "Update API keys",
+        "description": "Change, add or clear keys. [Congress.gov]({congress_url}) · [Open States]({openstates_url}) · [Google Civic]({civic_url}) · [Cook API]({cook_url})",
+        "data": {
+          "congress_api_key": "Congress.gov API key",
+          "openstates_api_key": "Open States API key",
+          "civic_api_key": "Google Civic Information API key",
+          "cook_email": "Cook Political Report email",
+          "cook_password": "Cook Political Report password"
+        }
+      },
+      "reauth_confirm": {
+        "title": "An API key stopped working",
+        "description": "One of your keys was rejected. Update it, or clear it to turn that source off. [Congress.gov]({congress_url}) · [Open States]({openstates_url}) · [Google Civic]({civic_url}) · [Cook API]({cook_url})",
+        "data": {
+          "congress_api_key": "Congress.gov API key",
+          "openstates_api_key": "Open States API key",
+          "civic_api_key": "Google Civic Information API key",
+          "cook_email": "Cook Political Report email",
+          "cook_password": "Cook Political Report password"
+        }
+      }
+    },
+    "error": {
+      "invalid_key": "This key was rejected.",
+      "cannot_connect": "Couldn't reach this service. Try again in a minute.",
+      "cook_incomplete": "Enter both the Cook email and password, or leave both blank.",
+      "cook_denied": "Cook didn't accept this login, or your plan doesn't include API access."
+    },
+    "abort": {
+      "already_configured": "Boiler Room is already set up.",
+      "single_instance_allowed": "Boiler Room is already set up.",
+      "reconfigure_successful": "Keys updated.",
+      "reauth_successful": "Keys updated."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "What to follow",
+        "description": "Lists take one item per line or comma-separated. Not recognized: {invalid}",
+        "data": {
+          "state": "Home state",
+          "congressional_district": "Congressional district",
+          "federal_bills": "Federal bills",
+          "state_bills": "State bills",
+          "markets": "Polymarket markets or events",
+          "odds_alert_threshold": "Odds alert threshold",
+          "news_sources": "News outlets",
+          "custom_feeds": "Extra RSS/Atom feeds",
+          "news_keywords": "Headline keywords",
+          "headline_count": "Headlines to keep"
+        },
+        "data_description": {
+          "state": "Auto works when an Open States key is set. Without it, pick your state for senators from Congress.gov.",
+          "congressional_district": "Only needed without an Open States key. Use 0 for at-large states.",
+          "federal_bills": "e.g. HR 1234, S.55, 118/hr/815, or a congress.gov bill link. Defaults to the current Congress. Needs a Congress.gov key.",
+          "state_bills": "e.g. S1234 or A 5678 for your state, or ny:S1234 for another. Needs an Open States key.",
+          "markets": "Paste a polymarket.com event or market link, or just its slug.",
+          "odds_alert_threshold": "Fire a boiler_room_odds_moved event when an outcome moves at least this many percentage points between checks. 0 turns it off.",
+          "news_sources": "Established outlets with working feeds, picked to span the spectrum.",
+          "custom_feeds": "Any RSS or Atom link, one per line — a subreddit's .rss link, your local paper, a Substack.",
+          "news_keywords": "Comma-separated. When set, only headlines containing one of these are kept.",
+          "headline_count": "How many recent headlines the sensor keeps in its attributes."
+        }
+      }
+    },
+    "error": {
+      "invalid_entries": "Some entries weren't recognized (listed above)."
+    }
+  },
+  "entity": {
+    "sensor": {
+      "us_senator_1": {
+        "name": "U.S. Senator 1"
+      },
+      "us_senator_2": {
+        "name": "U.S. Senator 2"
+      },
+      "us_representative": {
+        "name": "U.S. Representative"
+      },
+      "state_senator": {
+        "name": "State senator"
+      },
+      "state_representative": {
+        "name": "State representative"
+      },
+      "latest_headline": {
+        "name": "Latest headline"
+      },
+      "next_election": {
+        "name": "Next election"
+      },
+      "cook_house_toss_ups": {
+        "name": "Cook House toss-ups"
+      },
+      "cook_senate_toss_ups": {
+        "name": "Cook Senate toss-ups"
+      },
+      "cook_governor_toss_ups": {
+        "name": "Cook Governor toss-ups"
+      },
+      "cook_home_house": {
+        "name": "Cook rating: your House district"
+      },
+      "cook_home_senate": {
+        "name": "Cook rating: your Senate race"
+      },
+      "cook_home_governor": {
+        "name": "Cook rating: your governor's race"
+      }
+    },
+    "binary_sensor": {
+      "election_day": {
+        "name": "Election day"
+      }
+    },
+    "calendar": {
+      "elections": {
+        "name": "Elections"
+      }
+    }
+  }
+}
